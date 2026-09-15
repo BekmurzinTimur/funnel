@@ -47,6 +47,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   await app.register(cookie);
+  app.get('/api/health', async () => ({ ok: true }));
   await app.register(sessionRoutes, { prefix: '/api' });
   await app.register(eventRoutes, { prefix: '/api' });
   await app.register(adminRoutes, { prefix: '/api' });
