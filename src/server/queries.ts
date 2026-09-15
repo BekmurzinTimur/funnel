@@ -264,3 +264,164 @@ export function insertRejected(db: DB, row: { session_id: string | null; raw_jso
 // ---------------------------------------------------------------------------
 // analytics — reads `events` and non-answer `sessions` columns only.
 // ---------------------------------------------------------------------------
+//
+// Every metric is COUNT(DISTINCT session_id) over a set-membership predicate
+// (SPEC §7). Session filters are applied on the sessions row (never on the
+// event copies of utm/variant), and `answers_json` is never referenced.
+
+/** Filters on the sessions row. `null` means "not filtered". */
+export interface AnalyticsFilter {
+  funnelId: string;
+  version: number | null;
+  variant: string | null;
+  campaign: string | null;
+  /** 1 = drop variant_forced sessions (A/B comparison only). */
+  excludeForced: 0 | 1;
+}
+
+const SESSION_FILTER = `s.funnel_id = @funnelId
+  AND (@version IS NULL OR s.funnel_version = @version)
+  AND (@variant IS NULL OR s.variant = @variant)
+  AND (@campaign IS NULL OR s.utm_campaign = @campaign)
+  AND (@excludeForced = 0 OR s.variant_forced = 0)`;
+
+export interface FunnelCountsRow {
+  version: number | null;
+  variant: string | null;
+  started: number;
+  completed: number;
+  ctaClicked: number;
+}
+
+const FUNNEL_GROUPINGS = {
+  none: { select: 'NULL AS version, NULL AS variant', groupBy: '' },
+  version: { select: 's.funnel_version AS version, NULL AS variant', groupBy: 'GROUP BY s.funnel_version' },
+  variant: { select: 'NULL AS version, s.variant AS variant', groupBy: 'GROUP BY s.variant' },
+  versionVariant: {
+    select: 's.funnel_version AS version, s.variant AS variant',
+    groupBy: 'GROUP BY s.funnel_version, s.variant',
+  },
+} as const;
+export type FunnelGrouping = keyof typeof FUNNEL_GROUPINGS;
+
+/** Started / completed / CTA-clicked distinct sessions, optionally grouped. */
+export function analyticsFunnelCounts(db: DB, filter: AnalyticsFilter, grouping: FunnelGrouping): FunnelCountsRow[] {
+  const g = FUNNEL_GROUPINGS[grouping];
+  return stmt(
+    db,
+    `SELECT ${g.select},
+       COUNT(DISTINCT CASE WHEN e.name = 'session_started' THEN e.session_id END) AS started,
+       COUNT(DISTINCT CASE WHEN e.name = 'result_viewed'   THEN e.session_id END) AS completed,
+       COUNT(DISTINCT CASE WHEN e.name = 'cta_clicked'     THEN e.session_id END) AS ctaClicked
+     FROM sessions s
+     JOIN events e ON e.session_id = s.id
+     WHERE ${SESSION_FILTER}
+     ${g.groupBy}`,
+  ).all(filter) as FunnelCountsRow[];
+}
+
+export interface StepReachRow {
+  version: number;
+  variant: string;
+  stepId: string;
+  /** Reached(S): distinct sessions with step_viewed for S. */
+  reached: number;
+  /** Reached(S) ∩ sessions with an incoming edge step_completed.next_step_id = S. */
+  edgeConverted: number;
+  /** Reached(S) ∩ session_started — the Converted set when S is the entry step. */
+  entryConverted: number;
+  /** Reached(S) with no step_completed whose step_id = S and no result_viewed. */
+  dropOff: number;
+}
+
+/** Reach-side per-step sets, grouped by (version, variant, step). */
+export function analyticsStepReach(db: DB, filter: AnalyticsFilter): StepReachRow[] {
+  return stmt(
+    db,
+    `SELECT s.funnel_version AS version, s.variant AS variant, v.step_id AS stepId,
+       COUNT(DISTINCT v.session_id) AS reached,
+       COUNT(DISTINCT CASE WHEN EXISTS (
+           SELECT 1 FROM events c
+           WHERE c.session_id = v.session_id AND c.name = 'step_completed'
+             AND json_extract(c.props_json, '$.next_step_id') = v.step_id
+         ) THEN v.session_id END) AS edgeConverted,
+       COUNT(DISTINCT CASE WHEN EXISTS (
+           SELECT 1 FROM events st WHERE st.session_id = v.session_id AND st.name = 'session_started'
+         ) THEN v.session_id END) AS entryConverted,
+       COUNT(DISTINCT CASE WHEN NOT EXISTS (
+           SELECT 1 FROM events o
+           WHERE o.session_id = v.session_id AND o.name = 'step_completed' AND o.step_id = v.step_id
+         ) AND NOT EXISTS (
+           SELECT 1 FROM events r WHERE r.session_id = v.session_id AND r.name = 'result_viewed'
+         ) THEN v.session_id END) AS dropOff
+     FROM sessions s
+     JOIN events v ON v.session_id = s.id
+     WHERE v.name = 'step_viewed' AND v.step_id IS NOT NULL
+       AND ${SESSION_FILTER}
+     GROUP BY s.funnel_version, s.variant, v.step_id`,
+  ).all(filter) as StepReachRow[];
+}
+
+export interface StepEligibleRow {
+  version: number;
+  variant: string;
+  stepId: string;
+  /** Eligible(S): distinct sessions with step_completed.next_step_id = S. */
+  eligible: number;
+}
+
+/** Edge-based Eligible sets, grouped by (version, variant, next_step_id). */
+export function analyticsStepEligible(db: DB, filter: AnalyticsFilter): StepEligibleRow[] {
+  return stmt(
+    db,
+    `SELECT s.funnel_version AS version, s.variant AS variant,
+       json_extract(e.props_json, '$.next_step_id') AS stepId,
+       COUNT(DISTINCT e.session_id) AS eligible
+     FROM sessions s
+     JOIN events e ON e.session_id = s.id
+     WHERE e.name = 'step_completed'
+       AND json_extract(e.props_json, '$.next_step_id') IS NOT NULL
+       AND ${SESSION_FILTER}
+     GROUP BY s.funnel_version, s.variant, json_extract(e.props_json, '$.next_step_id')`,
+  ).all(filter) as StepEligibleRow[];
+}
+
+/** Distinct sessions per event name, most common first. */
+export function analyticsEventCounts(db: DB, filter: AnalyticsFilter): { name: string; sessions: number }[] {
+  return stmt(
+    db,
+    `SELECT e.name AS name, COUNT(DISTINCT e.session_id) AS sessions
+     FROM sessions s
+     JOIN events e ON e.session_id = s.id
+     WHERE ${SESSION_FILTER}
+     GROUP BY e.name
+     ORDER BY sessions DESC, e.name`,
+  ).all(filter) as { name: string; sessions: number }[];
+}
+
+export function analyticsVersionNumbers(db: DB, funnelId: string): number[] {
+  return (
+    stmt(db, 'SELECT version FROM funnel_versions WHERE funnel_id = ? ORDER BY version').all(funnelId) as {
+      version: number;
+    }[]
+  ).map((r) => r.version);
+}
+
+/** Distinct non-null first-touch campaigns across every version of the funnel. */
+export function analyticsCampaigns(db: DB, funnelId: string): string[] {
+  return (
+    stmt(
+      db,
+      `SELECT DISTINCT s.utm_campaign AS campaign FROM sessions s
+       WHERE s.funnel_id = ? AND s.utm_campaign IS NOT NULL ORDER BY s.utm_campaign`,
+    ).all(funnelId) as { campaign: string }[]
+  ).map((r) => r.campaign);
+}
+
+/** Funnel of the first stored version, for a database with no active version. */
+export function analyticsAnyFunnelId(db: DB): string | null {
+  const row = stmt(db, 'SELECT funnel_id FROM funnel_versions ORDER BY funnel_id, version LIMIT 1').get() as
+    | { funnel_id: string }
+    | undefined;
+  return row?.funnel_id ?? null;
+}

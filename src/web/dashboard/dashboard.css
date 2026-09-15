@@ -1,0 +1,212 @@
+.dashboard h1 {
+  margin: 0 0 16px;
+  font-size: 1.5rem;
+}
+
+.dashboard h2 {
+  font-size: 1.15rem;
+  margin: 0 0 12px;
+}
+
+.dashboard h3 {
+  font-size: 1rem;
+  margin: 20px 0 8px;
+}
+
+.dashboard code {
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.dash-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-end;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.dash-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.dash-filters select {
+  min-width: 140px;
+}
+
+.dash-status {
+  font-size: 0.85rem;
+  min-height: 1.5em;
+}
+
+.dash-notice {
+  margin-bottom: 20px;
+}
+
+.dash-notice p {
+  margin: 0 0 8px;
+}
+
+.dash-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  padding: 14px 16px;
+}
+
+.stat-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.stat-value {
+  font-size: 1.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  margin: 2px 0 4px;
+}
+
+.dash-section {
+  margin-top: 36px;
+}
+
+.dash-block {
+  margin-top: 8px;
+}
+
+.dash-table th {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dash-table td.num,
+.dash-table th.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dash-table-narrow {
+  width: auto;
+  min-width: min(100%, 360px);
+}
+
+.ratio {
+  font-variant-numeric: tabular-nums;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  background: var(--accent-soft);
+  color: var(--text);
+  vertical-align: 1px;
+}
+
+.footnotes {
+  font-size: 0.85rem;
+  margin: 12px 0 0;
+  padding-left: 20px;
+}
+
+p.footnotes {
+  padding-left: 0;
+}
+
+.footnotes li + li {
+  margin-top: 6px;
+}
+
+.small {
+  font-size: 0.85rem;
+}
+
+.ztest {
+  margin: 12px 0 4px;
+}
+
+.sig {
+  color: var(--success);
+}
+
+/* Per-step conversion bar chart */
+.bar-chart {
+  margin: 0 0 8px;
+}
+
+.bar-chart figcaption {
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.bar-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px 32px;
+}
+
+.bar-group-title {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 34%) 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 0.85rem;
+}
+
+.bar-label {
+  overflow-wrap: anywhere;
+}
+
+.bar-track {
+  position: relative;
+  height: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 0 4px 4px 0;
+}
+
+.bar-row:hover .bar-fill {
+  filter: brightness(1.1);
+}
+
+.bar-value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+@media (max-width: 480px) {
+  .dash-filters label,
+  .dash-filters select {
+    width: 100%;
+  }
+
+  .bar-groups {
+    grid-template-columns: 1fr;
+  }
+}
