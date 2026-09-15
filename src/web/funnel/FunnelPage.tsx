@@ -3,7 +3,7 @@
 // advance, and no knowledge of variants — `session.config` is already materialised.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { NavigationResponse, SessionResponse } from '@shared/api';
-import { validate } from '@shared/navigation';
+import { nextStep, prevStep, validate } from '@shared/navigation';
 import type { AnswerValue, Answers } from '@shared/types';
 import { HttpError } from '../lib/http';
 import { createSession, currentSearch, postAnswer, postBack, removeResetParam, startOverSearch } from './api';
@@ -26,16 +26,25 @@ interface Loaded {
 type Status = 'loading' | 'error' | 'ready';
 
 const navOf = (s: SessionResponse): NavigationResponse => ({
+  sessionId: s.sessionId,
   currentStepId: s.currentStepId,
   visibleSteps: s.visibleSteps,
   progress: s.progress,
   resultId: s.resultId,
 });
 
-function serverMessage(e: HttpError): string | null {
-  const body = e.body as { message?: unknown } | null;
-  return body && typeof body === 'object' && typeof body.message === 'string' ? body.message : null;
+function bodyField(e: HttpError, field: 'error' | 'message'): string | null {
+  const body = e.body as Record<string, unknown> | null;
+  return body && typeof body === 'object' && typeof body[field] === 'string' ? (body[field] as string) : null;
 }
+
+/**
+ * The response belongs to this tab's session and landed where shared navigation predicts.
+ * Otherwise another tab changed the session (Start over, ?variant, or navigation on the same
+ * session), and emitting events would record an edge this tab never took.
+ */
+const confirms = (from: Loaded, nav: NavigationResponse, expected: string | null) =>
+  nav.sessionId === from.session.sessionId && nav.currentStepId === expected;
 
 export default function FunnelPage() {
   const [status, setStatus] = useState<Status>('loading');
@@ -80,11 +89,11 @@ export default function FunnelPage() {
   }, [title]);
 
   /** Render a navigation response; step_viewed fires only when a different step is now on screen. */
-  const apply = (from: Loaded, nav: NavigationResponse, patch?: Answers) => {
+  const apply = (from: Loaded, nav: NavigationResponse, answers: Answers = from.answers) => {
     const changed = nav.currentStepId !== from.nav.currentStepId;
     setLoaded({
       ...from,
-      answers: patch ? { ...from.answers, ...patch } : from.answers,
+      answers,
       nav,
       view: changed ? ++views.current : from.view,
     });
@@ -92,11 +101,12 @@ export default function FunnelPage() {
   };
 
   const fail = (e: unknown, retry: () => void) => {
-    if (e instanceof HttpError && e.status === 404) {
-      // session_not_found (expired or cleared): start again with a fresh create/resume.
+    if (e instanceof HttpError && e.status === 404 && bodyField(e, 'error') === 'session_not_found') {
+      // Expired or cleared session: start again with a fresh create/resume.
       void load(currentSearch());
     } else if (e instanceof HttpError && e.status === 400) {
-      setError({ message: serverMessage(e) ?? "That answer wasn't accepted. Please check it and try again." });
+      const message = bodyField(e, 'error') === 'invalid_answer' ? bodyField(e, 'message') : null;
+      setError({ message: message ?? "That answer wasn't accepted. Please check it and try again." });
     } else {
       setError({ message: "We couldn't save your progress. Check your connection and try again.", retry });
     }
@@ -135,9 +145,12 @@ export default function FunnelPage() {
       const seq = loadSeq.current;
       const nav = await postAnswer(stepId, value);
       if (seq !== loadSeq.current) return;
-      const moved = nav.currentStepId !== stepId;
-      if (moved) emitForward(eventContext(from.session), step, stepId, nav);
-      apply(from, nav, moved && value !== undefined ? { [stepId]: value } : undefined);
+      const answers: Answers = { ...from.answers };
+      if (value === undefined) delete answers[stepId];
+      else answers[stepId] = value;
+      if (!confirms(from, nav, nextStep(from.session.config, answers, stepId))) return void load(currentSearch());
+      emitForward(eventContext(from.session), step, stepId, nav);
+      apply(from, nav, answers);
     }, () => submit(value));
   };
 
@@ -146,7 +159,8 @@ export default function FunnelPage() {
       const seq = loadSeq.current;
       const nav = await postBack(stepId);
       if (seq !== loadSeq.current) return;
-      if (nav.currentStepId !== stepId) emitBack(eventContext(from.session), stepId, nav);
+      if (!confirms(from, nav, prevStep(from.session.config, from.answers, stepId))) return void load(currentSearch());
+      emitBack(eventContext(from.session), stepId, nav);
       apply(from, nav);
     }, back);
   };

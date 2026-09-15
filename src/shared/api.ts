@@ -44,6 +44,12 @@ export type SessionQuery = z.infer<typeof SessionQuerySchema>;
 
 /** Returned by `/api/session/answer` and `/api/session/back`. */
 export const NavigationResponseSchema = z.object({
+  /**
+   * The session the cookie resolved to. A tab whose session was replaced (Start over or
+   * ?variant in another tab) compares this with its own session and reloads instead of
+   * emitting events for a navigation that happened in a different session.
+   */
+  sessionId: z.string(),
   currentStepId: z.string().nullable(),
   visibleSteps: z.array(z.string()),
   progress: ProgressSchema,

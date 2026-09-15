@@ -20,8 +20,10 @@ const HOUR_MS = 3_600_000;
 
 function tokenMatches(header: string | undefined, token: string): boolean {
   if (!header || !token) return false;
-  const given = Buffer.from(header);
-  const expected = Buffer.from(`Bearer ${token}`);
+  const match = /^bearer +(\S+)$/i.exec(header); // auth scheme is case-insensitive (RFC 7235)
+  if (!match) return false;
+  const given = Buffer.from(match[1]);
+  const expected = Buffer.from(token);
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
@@ -114,9 +116,23 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
     }
     const { funnelId, version, schemaVersion } = result.config;
 
-    const conflict = db.transaction((): number | null => {
+    const rejection = db.transaction((): { error: string; message: string } | null => {
+      // One funnel per deployment: a config for another funnelId (e.g. a typo) would otherwise be
+      // boot-activated on the next restart alongside the real funnel.
+      const funnels = [...new Set(listVersions(db).map((row) => row.funnel_id))];
+      if (funnels.length > 0 && !funnels.includes(funnelId)) {
+        return {
+          error: 'funnel_mismatch',
+          message: `funnelId "${funnelId}" does not match the funnel this deployment runs (${funnels.join(', ')})`,
+        };
+      }
       const latest = maxVersion(db, funnelId);
-      if (latest !== null && version <= latest) return latest;
+      if (latest !== null && version <= latest) {
+        return {
+          error: 'version_conflict',
+          message: `version ${version} must be greater than the latest stored version ${latest}`,
+        };
+      }
       insertVersion(db, {
         funnel_id: funnelId,
         version,
@@ -127,12 +143,7 @@ export default async function adminRoutes(app: FastifyInstance): Promise<void> {
       return null;
     })();
 
-    if (conflict !== null) {
-      return reply.code(409).send({
-        error: 'version_conflict',
-        message: `version ${version} must be greater than the latest stored version ${conflict}`,
-      });
-    }
+    if (rejection) return reply.code(409).send(rejection);
     const response: PublishResponse = { funnelId, version, isActive: false };
     return reply.code(201).send(response);
   });

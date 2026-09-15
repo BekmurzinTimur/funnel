@@ -86,14 +86,15 @@ export function createSession(db: DB, options: CreateOptions): LoadedSession | u
 
   const row: SessionRow = {
     id,
-    funnel_id: config.funnelId,
-    funnel_version: config.version,
+    funnel_id: active.funnel_id,
+    funnel_version: active.version,
     experiment_id: config.experiment.id,
     variant,
     variant_forced: forced ? 1 : 0,
-    utm_source: options.utm.utm_source ?? null,
-    utm_medium: options.utm.utm_medium ?? null,
-    utm_campaign: options.utm.utm_campaign ?? null,
+    // Empty strings (`?utm_campaign=`) are stored as NULL so they cannot form an unfilterable bucket.
+    utm_source: options.utm.utm_source || null,
+    utm_medium: options.utm.utm_medium || null,
+    utm_campaign: options.utm.utm_campaign || null,
     answers_json: '{}',
     current_step_id: firstStep(materialised, {}),
     result_id: null,
@@ -117,19 +118,21 @@ export function resumeSession(db: DB, session: LoadedSession): LoadedSession {
 
 export function navigationResponse(session: LoadedSession): NavigationResponse {
   const { materialised, answers, row } = session;
-  return navigationState(materialised, answers, row.current_step_id, row.result_id);
+  const state = navigationState(materialised, answers, row.current_step_id, row.result_id);
+  // result_id stays on the row for late result events, but is only reported while the result step is current.
+  const onResult = row.current_step_id !== null && materialised.steps[row.current_step_id]?.type === 'result';
+  return { sessionId: row.id, ...state, resultId: onResult ? state.resultId : null };
 }
 
 export function sessionResponse(session: LoadedSession): SessionResponse {
   const { row } = session;
   return {
-    sessionId: row.id,
+    ...navigationResponse(session),
     funnelVersion: row.funnel_version,
     variant: row.variant,
     variantForced: row.variant_forced === 1,
     config: session.materialised,
     answers: session.answers,
-    ...navigationResponse(session),
   };
 }
 

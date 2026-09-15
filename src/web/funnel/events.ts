@@ -21,7 +21,8 @@ export function emitStepViewed(ctx: TrackContext, config: MaterialisedConfig, na
     visible_step_index: nav.visibleSteps.indexOf(stepId) + 1,
     visible_step_count: nav.visibleSteps.length,
   });
-  if (step?.type === 'result') track(ctx, 'result_viewed', stepId, {});
+  // Only when a result is actually shown; an error screen must not count as a completion.
+  if (step?.type === 'result' && nav.resultId && config.results[nav.resultId]) track(ctx, 'result_viewed', stepId, {});
 }
 
 /** After /answer moved the session off `fromId`. Never carries the answer value. */

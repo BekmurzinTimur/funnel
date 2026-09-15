@@ -27,7 +27,14 @@ let started = false;
 function load(): Pending[] {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
-    return Array.isArray(parsed) ? (parsed as Pending[]).filter((p) => typeof p?.event?.event_id === 'string') : [];
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as Partial<Pending>[])
+      .filter((p) => typeof p?.event?.event_id === 'string' && typeof p.event.session_id === 'string' && typeof p.event.name === 'string')
+      .map((p) => ({
+        event: p.event as EventItem,
+        attempts: Number.isFinite(p.attempts) ? (p.attempts as number) : 0,
+        nextAttemptAt: Number.isFinite(p.nextAttemptAt) ? (p.nextAttemptAt as number) : 0,
+      }));
   } catch {
     return [];
   }
@@ -93,16 +100,17 @@ export async function flush(): Promise<void> {
     } catch {
       // Network failure: status stays 0 and the batch is retried.
     }
-    if (status === 0 || status >= 500) {
+    if (status === 200 || status === 400) {
+      // 200: every item has a final outcome (accepted, duplicate or rejected). 400: the batch itself is invalid.
+      const sent = new Set(batch);
+      queue = queue.filter((p) => !sent.has(p));
+    } else {
+      // Network failure, 5xx, and transient 4xx (408, 413, 429, a proxy 404 mid-deploy): back off and retry.
       for (const p of batch) {
         p.attempts += 1;
         p.nextAttemptAt = Date.now() + 1000 * 2 ** p.attempts;
       }
       queue = queue.filter((p) => p.attempts < MAX_ATTEMPTS);
-    } else {
-      // 200: every item has a final outcome (accepted, duplicate or rejected). Other 4xx: the batch is unacceptable as a whole.
-      const sent = new Set(batch);
-      queue = queue.filter((p) => !sent.has(p));
     }
     persist();
   } finally {

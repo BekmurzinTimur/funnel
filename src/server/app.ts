@@ -42,6 +42,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     try {
       done(null, body === '' ? {} : JSON.parse(body as string));
     } catch (err) {
+      // Malformed JSON is the client's fault, same as for application/json.
+      (err as Error & { statusCode?: number }).statusCode = 400;
       done(err as Error, undefined);
     }
   });

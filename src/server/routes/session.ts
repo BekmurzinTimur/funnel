@@ -7,6 +7,7 @@ import {
   SYNTHETIC_HEADER,
   type SessionQuery,
 } from '@shared/api';
+import { formatIssues } from '@shared/config.schema';
 import {
   applyAnswer,
   applyBack,
@@ -17,6 +18,12 @@ import {
   sessionResponse,
   type LoadedSession,
 } from '../session';
+
+const invalidBody = (issues: Parameters<typeof formatIssues>[0]) => ({
+  error: 'invalid_body',
+  message: 'The request body is invalid.',
+  details: formatIssues(issues),
+});
 
 /** Lenient query parsing: an invalid param (too long, repeated) is dropped, never fatal. */
 function parseQuery(query: unknown): SessionQuery {
@@ -63,6 +70,7 @@ export default async function sessionRoutes(app: FastifyInstance): Promise<void>
     reply.setCookie(SESSION_COOKIE, created.row.id, {
       httpOnly: true,
       sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
       path: '/',
       maxAge: Math.round(created.config.session.ttlHours * 3600),
     });
@@ -73,7 +81,7 @@ export default async function sessionRoutes(app: FastifyInstance): Promise<void>
     const session = liveSessionOr404(request, reply);
     if (!session) return reply;
     const body = AnswerBodySchema.safeParse(request.body);
-    if (!body.success) return reply.code(400).send({ error: 'invalid_body', message: body.error.message });
+    if (!body.success) return reply.code(400).send(invalidBody(body.error.issues));
 
     const outcome = applyAnswer(db, session, body.data.stepId, body.data.value);
     if (!outcome.ok) return reply.code(400).send({ error: 'invalid_answer', message: outcome.message });
@@ -84,7 +92,7 @@ export default async function sessionRoutes(app: FastifyInstance): Promise<void>
     const session = liveSessionOr404(request, reply);
     if (!session) return reply;
     const body = BackBodySchema.safeParse(request.body);
-    if (!body.success) return reply.code(400).send({ error: 'invalid_body', message: body.error.message });
+    if (!body.success) return reply.code(400).send(invalidBody(body.error.issues));
     return applyBack(db, session, body.data.stepId);
   });
 }

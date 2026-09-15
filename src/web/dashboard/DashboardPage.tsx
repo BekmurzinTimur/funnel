@@ -129,7 +129,8 @@ function FilterBar({
   onChange: (key: (typeof FILTER_KEYS)[number], value: string) => void;
 }) {
   const meta = data?.meta;
-  const version = data ? String(data.filters.version ?? '') : (params.get('version') ?? '');
+  // The URL is the source of truth while a request is in flight or after an error.
+  const version = params.get('version') ?? (data ? String(data.filters.version ?? '') : '');
   const variant = params.get('variant') ?? '';
   const campaign = params.get('utm_campaign') ?? '';
   const campaigns = meta?.campaigns ?? [];

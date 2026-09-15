@@ -47,12 +47,12 @@ describe('version pinning', () => {
     return res.json<NavigationResponse>();
   };
 
-  const publishAndActivateV3 = async () => {
+  const publishAndActivateV3 = async (payload = readConfigText('iteration-2/funnel-v3.json')) => {
     const publish = await t.app.inject({
       method: 'POST',
       url: '/api/admin/versions',
       headers: { ...adminHeaders, 'content-type': 'application/json' },
-      payload: readConfigText('iteration-2/funnel-v3.json'),
+      payload,
     });
     expect(publish.statusCode, publish.body).toBe(201);
     const activate = await t.app.inject({ method: 'POST', url: '/api/admin/versions/3/activate', headers: adminHeaders });
@@ -87,6 +87,30 @@ describe('version pinning', () => {
       .prepare("SELECT funnel_version FROM events WHERE session_id = ? AND name = 'session_started'")
       .get(fresh.sessionId);
     expect(freshStarted).toEqual({ funnel_version: 3 });
+  });
+
+  it('measures the session TTL with the pinned config, not the active one', async () => {
+    const { res, body: created } = await startSession();
+    const cookie = sessionCookie(res)!;
+
+    const shortTtl = readConfig('iteration-2/funnel-v3.json');
+    shortTtl.session.ttlHours = 1;
+    await publishAndActivateV3(JSON.stringify(shortTtl));
+
+    const age = (hours: number) =>
+      t.db.prepare('UPDATE sessions SET created_at = ? WHERE id = ?').run(new Date(Date.now() - hours * 3_600_000).toISOString(), created.sessionId);
+
+    // 2 hours old: expired under the active v3 TTL (1h), live under the pinned v1 TTL (72h).
+    age(2);
+    const { body: resumed } = await startSession(cookie);
+    expect(resumed.sessionId).toBe(created.sessionId);
+    expect(resumed.funnelVersion).toBe(1);
+
+    // Past the pinned 72 hours the session is treated as absent: a new session on the active version.
+    age(73);
+    const { body: replaced } = await startSession(cookie);
+    expect(replaced.sessionId).not.toBe(created.sessionId);
+    expect(replaced.funnelVersion).toBe(3);
   });
 
   it('★ a v1 session left mid-funnel continues to the result step after v3 is active', async () => {
