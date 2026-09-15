@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+*.db
+*.db-wal
+*.db-shm
+coverage/
+.DS_Store
+.claude/worktrees/
+.claude/settings.local.json
