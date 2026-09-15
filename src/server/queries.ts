@@ -88,6 +88,15 @@ export function ensureActiveVersion(db: DB): void {
   for (const f of funnels) if (!f.any_active) activateVersion(db, f.funnel_id, f.lowest);
 }
 
+/** Funnel IDs that hold a given version number (normally one). */
+export function funnelsWithVersion(db: DB, version: number): string[] {
+  return (
+    stmt(db, 'SELECT funnel_id FROM funnel_versions WHERE version = ? ORDER BY funnel_id').all(version) as {
+      funnel_id: string;
+    }[]
+  ).map((r) => r.funnel_id);
+}
+
 const configs = new WeakMap<DB, Map<string, FunnelConfig>>();
 
 /**
@@ -163,6 +172,23 @@ export function updateSessionState(
 
 export function touchSession(db: DB, id: string): void {
   stmt(db, 'UPDATE sessions SET last_seen_at = ? WHERE id = ?').run(nowIso(), id);
+}
+
+/**
+ * Sessions pinned to a version: total, and live (created strictly after `liveSince`,
+ * an ISO timestamp — created_at is always written by nowIso, so string order is time order).
+ */
+export function countVersionSessions(
+  db: DB,
+  funnelId: string,
+  version: number,
+  liveSince: string,
+): { total: number; live: number } {
+  return stmt(
+    db,
+    `SELECT COUNT(id) AS total, COALESCE(SUM(created_at > ?), 0) AS live
+     FROM sessions WHERE funnel_id = ? AND funnel_version = ?`,
+  ).get(liveSince, funnelId, version) as { total: number; live: number };
 }
 
 // ---------------------------------------------------------------------------
