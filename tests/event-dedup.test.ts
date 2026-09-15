@@ -273,4 +273,94 @@ describe('POST /api/events — server-derived fields', () => {
     // A session without a computed result gets no result_id at all.
     expect(JSON.parse(storedEvent(noResult.event_id as string)!.props_json)).toEqual({});
   });
+
+  it('drops allowed props whose values are not short scalars', async () => {
+    const session = createSession();
+    const viewed = event(session, 'step_viewed', {
+      props: { step_type: { nested: 'answer' }, visible_step_index: 2, visible_step_count: null },
+    });
+    const answered = event(session, 'answer_submitted', { step_id: 'team_size', props: { answer_kind: 'x'.repeat(201) } });
+    const clicked = event(session, 'back_clicked', { step_id: 'team_size', props: { destination_step_id: ['intro'] } });
+    const kept = event(session, 'answer_submitted', { step_id: 'work_mode', props: { answer_kind: 'x'.repeat(200) } });
+
+    const { body } = await postEvents([viewed, answered, clicked, kept]);
+
+    expect(body.results.map((r) => r.status)).toEqual(['accepted', 'accepted', 'accepted', 'accepted']);
+    expect(storedEvent(viewed.event_id as string)!.props_json).toBe('{"visible_step_index":2,"visible_step_count":null}');
+    expect(storedEvent(answered.event_id as string)!.props_json).toBe('{}');
+    expect(storedEvent(clicked.event_id as string)!.props_json).toBe('{}');
+    expect(JSON.parse(storedEvent(kept.event_id as string)!.props_json)).toEqual({ answer_kind: 'x'.repeat(200) });
+  });
+});
+
+describe('POST /api/events — edge cases', () => {
+  it('rejects a completely unknown event name as event_not_allowed', async () => {
+    const session = createSession();
+    const made_up = event(session, 'totally_made_up_event');
+
+    const { body } = await postEvents([made_up]);
+
+    expect(body.results).toEqual([{ event_id: made_up.event_id, status: 'rejected', reason: 'event_not_allowed' }]);
+  });
+
+  it('treats a pinned config without an events section as allowing nothing', async () => {
+    const config = JSON.parse(readConfigText('funnel-v1.json')) as Record<string, unknown>;
+    delete config.events;
+    insertVersion(t.db, { funnel_id: FUNNEL_ID, version: 2, config_json: JSON.stringify({ ...config, version: 2 }), schema_version: '1', created_at: nowIso() });
+    const session = createSession({ funnel_version: 2 });
+    const viewed = event(session, 'step_viewed');
+
+    const { statusCode, body } = await postEvents([viewed]);
+
+    expect(statusCode).toBe(200);
+    expect(body.results).toEqual([{ event_id: viewed.event_id, status: 'rejected', reason: 'event_not_allowed' }]);
+  });
+
+  it('dedupes event_ids case-insensitively: an uppercase re-send is a duplicate', async () => {
+    const session = createSession();
+    const viewed = event(session, 'step_viewed', { props: { step_type: 'info', visible_step_index: 1, visible_step_count: 8 } });
+    await postEvents([viewed]);
+    const before = count('events');
+
+    const { body } = await postEvents([{ ...viewed, event_id: (viewed.event_id as string).toUpperCase() }]);
+
+    expect(body.results.map((r) => r.status)).toEqual(['duplicate']);
+    expect(count('events')).toBe(before);
+  });
+
+  it('stores events_rejected.session_id only when it is a string of at most 100 characters', async () => {
+    const tooLong = { event_id: randomUUID(), session_id: 's'.repeat(101), name: 'step_viewed' };
+    const notString = { event_id: randomUUID(), session_id: 42, name: 'step_viewed' };
+
+    const { body } = await postEvents([tooLong, notString]);
+
+    expect(body.results.map((r) => r.reason)).toEqual(['invalid_shape', 'invalid_shape']);
+    const rows = t.db.prepare('SELECT session_id FROM events_rejected ORDER BY id').all() as { session_id: string | null }[];
+    expect(rows).toEqual([{ session_id: null }, { session_id: null }]);
+  });
+
+  it('a database fault fails the whole batch with 500 and rolls back; the retry then succeeds', async () => {
+    const session = createSession({ current_step_id: 'result', result_id: 'balanced' });
+    const batch = [
+      event(session, 'step_viewed', { props: { step_type: 'info', visible_step_index: 1, visible_step_count: 8 } }),
+      event(session, 'step_viewed', { event_id: 'not-a-uuid' }),
+      event(session, 'cta_clicked', { step_id: 'result', props: { action: 'expand_recommendation' } }),
+      event(session, 'step_completed', { props: { next_step_id: 'team_size' } }),
+    ];
+    const eventsBefore = count('events');
+    const rejectedBefore = count('events_rejected');
+
+    t.db.exec(`CREATE TRIGGER boom BEFORE INSERT ON events WHEN NEW.name = 'cta_clicked' BEGIN SELECT RAISE(ABORT, 'boom'); END`);
+    const failed = await t.app.inject({ method: 'POST', url: '/api/events', payload: { events: batch } });
+    expect(failed.statusCode).toBe(500);
+    expect(count('events')).toBe(eventsBefore);
+    expect(count('events_rejected')).toBe(rejectedBefore);
+
+    t.db.exec('DROP TRIGGER boom');
+    const retry = await postEvents(batch);
+    expect(retry.statusCode).toBe(200);
+    expect(retry.body.results.map((r) => r.status)).toEqual(['accepted', 'rejected', 'accepted', 'accepted']);
+    expect(count('events')).toBe(eventsBefore + 3);
+    expect(count('events_rejected')).toBe(rejectedBefore + 1);
+  });
 });
