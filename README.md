@@ -312,13 +312,34 @@ finish on v1 → roll back by activating v1. The `contains` operator and the
 `recommendation_expanded` trigger point were built in iteration 1 (the latter dormant behind the
 allowed-list gate).
 
-TODO: verification notes.
+**Verified locally** (scripted HTTP + headless Chrome against the production build):
+
+1. A v1 session answered three steps and was left at `priorities`.
+2. `funnel-v3.json` published through the admin API → stored as **version 3**, inactive, text
+   byte-identical to the file; then activated.
+3. v3 variant A: *Compliance* opened `security_constraints` → `regulated_scale`. v3 variant B
+   (remote, 20 meeting hours): `meeting_hours` asked, no `tool_count`, `security_constraints` or
+   `office_days` → `meeting_heavy` with B's title override. CTA expanded the recommendations and
+   `recommendation_expanded` was accepted for v3 sessions.
+4. The traffic generator re-run on the now-active v3; all invariants passed.
+5. The old session resumed on **v1** at `priorities` and finished with a v1 result;
+   a `recommendation_expanded` sent for it was rejected `event_not_allowed`.
+6. Rolled back by activating v1: new sessions get v1, v3 events and analytics stay queryable, and
+   the dashboard compares v1 and v3 (`tool_count` shows *n/a* for v3 variant B).
+7. `sqlite_master` was identical before and after the whole flow — zero DDL.
 
 ---
 
 ## Timeline
 
-TODO
+| When | Phase |
+|---|---|
+| Day 1, 23:23 | Brief, spec and configs committed. |
+| 23:23 – 23:33 | **Iteration 1, phase 1 — contracts:** scaffold, `schema.sql`, all of `src/shared` with unit tests, `api.ts` route contracts, server seam (`buildApp`, queries, boot seed). |
+| 23:35 – 00:12 | **Phase 2 — four parallel tracks** in separate git worktrees (session & admin, funnel UI, event ingest & generator, analytics). In parallel on `main`: Dockerfile/Railway config and the README draft. |
+| 00:12 – 00:26 | **Phase 3 — review & integrate:** one review agent per track, merge A → C → B → D, end-to-end generator run, headless-browser click-through of both variants and branches, review fixes. |
+| Day 2, ~00:30 | **Iteration 2:** v3 published, activated, clicked through, generator re-run, old v1 session finished, rolled back — no schema or pipeline changes. |
+| TODO | Deploy to Railway, seed production, publish/rollback on production, redeploy persistence check. |
 
 ---
 
@@ -365,4 +386,59 @@ Fly.io with `fly volumes create` mounted at `/data` is equivalent. Serverless pl
 
 ## How this was built
 
-TODO
+Built with Claude Code as an orchestrator of sub-agents, following the build order in
+[SPEC.md §16](SPEC.md). Parallelism was only safe because the interfaces were fixed first.
+
+**1. Contracts first (one agent, sequential).** The orchestrating session wrote everything the
+tracks would build against: the config schema and whitelists, the condition evaluator, variant
+materialisation and assignment, navigation/progress/results, `src/shared/api.ts` (Zod
+request/response schemas for every route), `schema.sql`, and a server seam (`buildApp()` for
+`app.inject` tests, explicit-column queries including the idempotent event insert, boot seed,
+route stubs, router shell). Unit tests for the shared core were green before any track started.
+
+**2. Four parallel tracks, each in its own git worktree.** Each agent got its spec sections, the
+decisions already made, a strict file-ownership list and its tests from §10. `src/shared` was
+frozen — contract changes had to be requested, not made (none were requested; one was later made
+by the orchestrator, below). Tracks without a live dependency built against the contracts: the
+analytics track used a hand-made fixture DB, the ingest track inserted session rows directly, the
+UI track built against `api.ts` types.
+
+| Track | Delivered | Tests |
+|---|---|---|
+| A. Session & admin | session lifecycle, variant assignment, TTL, admin routes, `/admin` | version-pinning, variant-stability, publish-rollback |
+| B. Funnel UI | renderer, 5 step types + unknown placeholder, Back/refresh/Start over, events, `eventQueue.ts` | manual (scripted browser run at integration) |
+| C. Ingest & generator | `/api/events`, `events_rejected`, `scripts/seed.ts` | event-dedup |
+| D. Analytics | `/api/analytics` SQL, `/dashboard` | analytics |
+
+**3. A review agent per track before merge.** Each reviewer read the track's diff against the spec
+(especially the "never cut" list), ran the tests and probed edge cases with scratch scripts. What
+review caught and what changed as a result:
+
+- **Funnel UI (blocker):** after another tab replaced the session cookie (Start over or
+  `?variant=B`), a stale tab treated the other session's state as its own navigation — emitting a
+  fake `priorities → intro` edge under the wrong session and polluting per-step analytics. Fixed with
+  a contract change (`sessionId` on navigation responses) plus a check against shared
+  `nextStep`/`prevStep` before emitting.
+- **Funnel UI:** the event queue silently dropped batches on any 4xx (e.g. 429 or a proxy 404
+  mid-deploy); `result_viewed` could fire from the result *error* screen and inflate completion.
+- **Ingest:** a database fault on one item was reported as the client's `invalid_shape` (so the
+  client dropped it), and could leave a partially committed batch; allowed property *keys* could
+  still carry answer objects as *values*, breaking the privacy boundary; the generator's invariants
+  were lower bounds that a server mislabelling outcomes would still pass.
+- **Admin:** publishing a config with a typo in `funnelId` stored it as a second funnel that boot
+  seeding would activate on the next restart; `resultId` leaked into non-result steps after Back.
+- **Analytics:** a key built with NUL separators made `analytics.ts` a binary file to git, hiding
+  the core module from diffs; the dashboard version selector showed a stale value mid-request.
+- Reviews also independently re-derived the hand-computed analytics numbers and confirmed the ★
+  remote-session test fails under index-based math.
+
+**4. Integration checks run by the orchestrator** (not just the unit suite): a trial merge of all
+four branches; the generator against a real production build (every invariant, 0 server errors);
+a scripted headless-Chrome click-through of both variants, both branches, validation, Back, refresh,
+Start over and the CTA, followed by reading the events table to confirm the recorded edges; the
+iteration-2 flow above with a schema diff; and a 200 000-UUID check that variant assignment is
+unbiased after one generator run showed a lopsided 45/75 split (it was chance).
+
+**Process issues worth noting.** All four worktrees were created from the initial commit rather than
+the contracts commit; each agent detected it and fast-forwarded before starting, and one agent's
+first `npm ci` escaped into the main checkout before it noticed (harmless, same lockfile — verified).
