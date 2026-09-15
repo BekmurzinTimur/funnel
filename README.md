@@ -1,10 +1,354 @@
-# funnel
+# Funnel Runtime
 
-Funnel Runtime — configurable multi-step funnels with versioning, rollback, A/B,
-an idempotent event pipeline and analytics.
+A small platform for running, versioning and analysing configurable multi-step web funnels:
+a JSON-config-driven renderer, immutable config versions with publish/rollback,
+server-assigned A/B variants, an idempotent batched event pipeline and an edge-based
+analytics dashboard. TypeScript end to end, one process, one SQLite file.
 
-- Brief: [test_tasks.md](test_tasks.md)
-- Implementation spec: [SPEC.md](SPEC.md)
-- Configs: [configs/](configs/)
+| | |
+|---|---|
+| Public URL | `TODO: https://<app>.up.railway.app` |
+| Repository | `TODO: https://github.com/<user>/funnel` |
+| Admin page | `/admin` — token: `TODO: set ADMIN_TOKEN on the host and put it here` |
+| Dashboard | `/dashboard` |
 
-This README will be replaced by the deliverable README described in SPEC.md §13.
+**Reviewer shortcuts** (append to the funnel URL):
+
+| Query | Effect |
+|---|---|
+| `?reset=1` | Drop the session cookie and start a fresh session (the "Start over" link does the same). |
+| `?variant=A` / `?variant=B` | Force a variant for a *new* session. On an existing session with a different variant, a new session is started — the pinned one is never mutated. Forced sessions are excluded from the A/B comparison card. |
+| `?utm_campaign=…&utm_source=…&utm_medium=…` | First-touch attribution, stored on the session row. |
+
+To see both branches: answer `work_mode` = *Hybrid* or *Mostly in the office* to get the
+`office_days` question, *Fully remote* to skip it. On v3, selecting *Compliance* in
+`priorities` opens `security_constraints`.
+
+---
+
+## Local setup
+
+```bash
+git clone <repo> && cd funnel
+npm i
+npm run dev          # Fastify on :3000 (tsx watch) + Vite on :5173, /api proxied
+npm run seed         # in another terminal: 150 synthetic sessions through the HTTP API
+```
+
+Open http://localhost:5173 (funnel), `/admin` (token `dev-admin-token` unless `ADMIN_TOKEN`
+is set) and `/dashboard`.
+
+| Command | |
+|---|---|
+| `npm test` | Vitest: shared core + integration tests against a temp-file SQLite DB |
+| `npm run build && npm start` | Production mode: one port serves `/api/*` and the built SPA |
+| `npm run seed -- --sessions=150 --seed=42 --target=http://localhost:3000` | Traffic generator |
+| `npm run typecheck` | `tsc --noEmit` |
+
+Environment: `PORT` (3000), `DB_PATH` (`./data/funnel.db`; `/data/funnel.db` in the image),
+`ADMIN_TOKEN` (required when `NODE_ENV=production`).
+
+On boot the server applies `schema.sql`, inserts any `configs/*.json` (top level only) whose
+`(funnelId, version)` is missing, and activates the lowest version if none is active. It
+never generates traffic — an empty dashboard after a redeploy means the volume is wrong, not
+that the data needs re-seeding.
+
+---
+
+## Architecture
+
+```
+src/shared   isomorphic core: config schema, condition evaluator, variant materialisation,
+             navigation/progress, result resolution, API contracts (Zod)
+src/server   Fastify + better-sqlite3: session, events, admin, analytics routes
+src/web      React: funnel renderer (/), admin (/admin), dashboard (/dashboard), event queue
+scripts      seed.ts traffic generator
+configs      funnel-v1.json (boot-seeded), iteration-2/funnel-v3.json (published via admin)
+```
+
+Principles the code is organised around:
+
+1. **One implementation of funnel logic.** Visibility, navigation, progress, validation and
+   result resolution live in `src/shared` and are imported by both server and client.
+2. **Config is an opaque blob** (`funnel_versions.config_json`), event properties are a JSON
+   column. A new step, branch or event type needs zero DDL and zero changes to validation,
+   ingest, storage or analytics code.
+3. **The server is the source of truth** for session state, current step, pinned version,
+   variant and result. The client renders what the server returns; no optimistic navigation.
+4. **Analytics counts distinct sessions over set membership**, never event sequences.
+5. **Raw answers never reach the analytics store.** They live only in `sessions.answers_json`.
+
+---
+
+## Data model
+
+Four tables (`src/server/schema.sql`), created with `CREATE TABLE IF NOT EXISTS` — no migrations.
+
+| Table | Purpose |
+|---|---|
+| `funnel_versions` | `(funnel_id, version)` PK, `config_json` stored **verbatim** as submitted, `is_active` pointer. Rows are never deleted. |
+| `sessions` | Pinned `funnel_version` (FK), `experiment_id`, `variant`, `variant_forced`, first-touch `utm_*`, `answers_json`, `current_step_id`, server-computed `result_id`, `is_synthetic`, timestamps. |
+| `events` | `event_id` PK (idempotency key), `session_id` (FK), `name`, `step_id`, `client_ts`, `server_ts`, attribution copied from the session row, `props_json`. **No answer column exists.** |
+| `events_rejected` | Raw JSON + reason for every rejected item. |
+
+Foreign keys are enforced (`PRAGMA foreign_keys = ON`): an event for a non-existent session or a
+session pinned to a non-existent version fails at the database even if a handler check is missed.
+
+### Sessions, pinning and TTL
+
+- `POST /api/session` resumes the session in the httpOnly `fsid` cookie, or creates one.
+  Creation is the **only** place the active version is read; afterwards config is always
+  resolved from `sessions.funnel_version`, so publishing never affects a running session.
+- Variant = `FNV-1a(session_id + experiment_id) % 100` bucketed by the config's weights, then
+  **persisted** — stickiness is a property of the row, not of the hash. v3 changes the
+  experiment id, so v3 sessions bucket independently of v1.
+- `session_started` is written server-side in the same transaction as the session row.
+- Navigation is server-side: `POST /api/session/answer` validates with the shared validator,
+  stores the answer, computes the next visible step and — on reaching the result step —
+  resolves and stores `result_id`. `POST /api/session/back` persists the previous visible step,
+  so refresh after Back resumes where the user actually is. A stale `stepId` (double click,
+  second tab) changes nothing and returns the current state.
+- **TTL:** `session.ttlHours` (72) of the *pinned* config. A session older than that is treated
+  as absent: the next visit creates a new session on the **currently active** version, which
+  may also mean a different variant.
+
+### Versioning and rollback
+
+- `POST /api/admin/versions` validates the config (every problem listed, 400) and stores it
+  under the config's own `(funnelId, version)`. It does **not** activate.
+- **Version numbering:** the `version` field in the file is authoritative and must be strictly
+  greater than every stored version of that funnel (otherwise 409). Gaps are allowed — the
+  provided v3 file is stored as version 3 on a database that only has v1, so the number in the
+  file, the admin table, event rows and the dashboard always agree.
+- `POST /api/admin/versions/:v/activate` moves the pointer in one transaction. Publish and
+  rollback are the same operation; rollback is activating a lower number.
+- Whitelists: step types `info | single-select | multi-select | number | result`, operators
+  `eq neq in nin gt gte lt lte contains`, groups `all any not`. A config using anything else is
+  rejected at publish time. Referential checks include: every sequence ID exists, one result
+  step and it is last, condition answers reference answer-bearing steps, and **a step's
+  `visibleWhen` may only reference steps earlier in the same variant's sequence**. As defence
+  in depth the renderer shows an unknown step type as a skippable placeholder.
+- `status`, `releaseNote`, `description`, `locale` and event `trigger` texts are informational;
+  `status: "draft"` in v3 has no effect — only `is_active` governs activation.
+
+---
+
+## Funnel behaviour
+
+### Progress policy
+
+Progress counts only steps the user can reach, excluding `info` and `result` types.
+**A conditional step whose gating answer has not been given yet counts toward the total.**
+Once the gate resolves, the step is included or excluded for real. On a forward path the
+denominator therefore only shrinks ("7 questions" → "6 questions" after choosing *Fully
+remote*); it never jumps up, which would read as a bug. Changing an earlier answer on the way
+back can of course re-open a branch.
+
+### Orphaned answers
+
+If the user goes back and changes an answer so that a previously answered step becomes hidden,
+the stored answer is **kept** but excluded from visible steps, progress and result evaluation
+(the evaluator only sees answers of currently visible steps, transitively). Re-entering the
+branch pre-fills the old answer.
+
+### Result
+
+Rules are evaluated in array order on the server; first match wins, otherwise
+`defaultResultId`. The client never derives the result, and the server stamps `result_id` from
+the session row onto `result_viewed`, `cta_clicked` and `recommendation_expanded`, so events and
+the dashboard can never disagree about which result a session saw.
+
+---
+
+## Event schema
+
+`POST /api/events` always takes a batch: `{ "events": [ ... ] }`.
+
+```jsonc
+{
+  "event_id": "5b0c…",           // UUID generated once at enqueue time, reused on every retry
+  "session_id": "…",
+  "name": "step_completed",
+  "step_id": "timezone_span",
+  "client_ts": "2026-09-15T10:00:00.000Z",
+  "props": { "next_step_id": "async_maturity" }
+}
+```
+
+Stored rows add `server_ts` and `funnel_id`, `funnel_version`, `experiment_id`, `variant`,
+`utm_source`, `utm_medium`, `utm_campaign`, `is_synthetic` — **re-derived from the session row**;
+anything the client sends for those is ignored.
+
+| Event | Emitted | Properties |
+|---|---|---|
+| `session_started` | server, on session creation (client-sent → rejected `server_only_event`) | — |
+| `step_viewed` | a step is rendered | `step_type`, `visible_step_index`, `visible_step_count` |
+| `answer_submitted` | after a successful `/answer` on a question step | `answer_kind` (the step type — **never the value**) |
+| `step_completed` | after every forward navigation from any non-result step, **including info steps** | `next_step_id` (from the server response) |
+| `back_clicked` | after `/back` | `destination_step_id` (from the server response) |
+| `result_viewed` | result rendered | `result_id` (server-stamped) |
+| `cta_clicked` | result CTA clicked | `result_id` (server-stamped), `action` |
+| `recommendation_expanded` | v3+: CTA expanded the recommendations | `result_id` (server-stamped), `action`, `source` |
+
+**Deliberate deviation:** the config's trigger text says `step_completed` fires "from a valid
+interactive step". We also fire it from info steps. Without the `intro → first question` edge,
+the first interactive step would have no incoming edge and an Eligible count of zero.
+
+Navigation events are emitted *after* the server's response using its values, so events always
+describe the path the server recorded.
+
+### Ingest rules (per item; a bad item never fails the batch)
+
+1. Zod shape check → `invalid_shape`.
+2. Session lookup → `unknown_session`.
+3. Name must be in the **pinned** version's `events.allowed` → `event_not_allowed`
+   (this is what lets v3 add `recommendation_expanded` with no ingest change, and what rejects it
+   from v1 sessions). `session_started` from a client → `server_only_event`.
+4. Properties not whitelisted for that event name are stripped (the privacy boundary).
+5. Attribution fields re-derived from the session, `server_ts` stamped.
+6. `INSERT … ON CONFLICT(event_id) DO NOTHING`, then `changes` → `accepted` or `duplicate`.
+   (`INSERT OR IGNORE` is avoided on purpose: it would also swallow NOT NULL/CHECK violations and
+   report them as successful duplicates.)
+
+Response is always `200 { results: [{ event_id, status: accepted|duplicate|rejected, reason? }] }`,
+so retrying after a timeout is safe.
+
+**Client queue** (`src/web/lib/eventQueue.ts`): in-memory array mirrored to `localStorage`,
+flushed every 2 s, `sendBeacon` on `visibilitychange`, exponential backoff, dropped after 5
+attempts. Events whose name is not in the session config's `allowed` list are dropped before
+enqueueing, so renderer trigger points ship once and stay dormant for versions that don't allow them.
+
+---
+
+## Aggregation rules
+
+Every metric is `COUNT(DISTINCT session_id)` over a **set-membership** predicate. Duplicate
+events, repeated views, back-navigation and out-of-order arrival cannot change any number.
+Filters (`version`, `variant`, `utm_campaign`) are applied to the **session** row.
+
+| Metric | Definition |
+|---|---|
+| Started | sessions with `session_started` |
+| Completion | sessions with `result_viewed` ÷ Started |
+| CTA CTR | sessions with `cta_clicked` ÷ sessions with `result_viewed` |
+| Reached(S) | sessions with `step_viewed` for S |
+| Eligible(S) | sessions with `step_completed` whose `next_step_id = S` (entry step: the Started set) |
+| Converted(S) | sessions in **Reached(S) ∩ Eligible(S)** |
+| Conversion into S | Converted(S) ÷ Eligible(S) |
+| Drop-off(S) | sessions in Reached(S) with no `step_completed` from S and no `result_viewed` |
+
+### Why the funnel is edge-based, not index-based
+
+`office_days` is only shown when `work_mode ∈ {hybrid, office}`. Computing "conversion into step
+*i*" as `reached(i) / reached(i−1)` by `stepSequence` index puts every fully-remote session into
+the denominator of a step it could never see, so `office_days` would show a large fake
+drop-off. Filtering by the `work_mode` answer is impossible by design — answers are not in the
+analytics store. `step_completed.next_step_id` is a traversed graph edge, not an answer: a remote
+session's edge from `timezone_span` points to `async_maturity`, so it is simply absent from
+`office_days`'s Eligible set. (Tested in `tests/analytics.test.ts`.)
+
+### Why the numerator is the intersection
+
+A session can have a `step_viewed` for S without the matching incoming edge — e.g. a
+`step_completed` the client queue dropped after its retries, or a tab closed before the flush.
+`Reached ÷ Eligible` could then exceed 100 %; `(Reached ∩ Eligible) ÷ Eligible` is bounded by
+construction. Raw Reached is shown alongside; `Reached − Converted` is a data-quality signal.
+
+### Drop-off is per step
+
+"Later step" is undefined in a branching graph; "has an outgoing edge" is well defined. A session
+can be counted at more than one step — it views `office_days`, goes back, switches to remote and
+abandons at `async_maturity` — so per-step drop-off can sum to more than the number of abandoned
+sessions. That is intended: it answers "of those who saw this step, how many never moved past it?"
+
+### Comparing variants and versions
+
+Variant B reorders steps (and in v3 removes `tool_count`), so per-step comparison across
+variants compares different funnel positions. **Across variants only funnel-level metrics are
+compared** (end-to-end conversion, completion, CTA CTR); per-step tables are shown within a
+variant. A step absent from a variant or version renders as **n/a**, never 0 %. Sessions with
+a forced variant (`?variant=`) are always excluded from the A/B card — forced assignment is not
+random assignment — and included everywhere else.
+
+---
+
+## A/B experiment
+
+> **Hypothesis.** Variant B front-loads the two lowest-effort, highest-relevance context questions
+> (`work_mode`, `timezone_span`) before asking for team specifics, and reframes the result as a
+> concrete next action ("See the 30-day action list") rather than a passive label. Reducing early
+> effort and making the payoff concrete should increase end-to-end conversion.
+>
+> **Primary metric.** Unique sessions with `cta_clicked` ÷ unique sessions with `session_started`.
+>
+> **Secondary.** Completion rate (`result_viewed` ÷ `session_started`); progression from the first
+> to the second interactive step.
+>
+> **Guardrail.** Drop-off on `priorities` — B rewords this step and the change could hurt it.
+
+The dashboard's A/B card runs a pooled two-proportion z-test on the primary metric.
+
+---
+
+## Iteration 2
+
+`configs/iteration-2/funnel-v3.json` (`version: 3`; there is no v2) adds a second conditional
+branch (`security_constraints` when `priorities contains "compliance"`), a `meeting_hours` step,
+removes `tool_count` from variant B, adds two results placed first in `resultRules`, adds the
+`recommendation_expanded` event and changes the experiment id.
+
+It shipped with **zero DDL and zero changes** to validation, ingest, storage or analytics:
+publish via `/admin` → stored as v3 → activate → new sessions run v3 while existing v1 sessions
+finish on v1 → roll back by activating v1. The `contains` operator and the
+`recommendation_expanded` trigger point were built in iteration 1 (the latter dormant behind the
+allowed-list gate).
+
+TODO: verification notes.
+
+---
+
+## Timeline
+
+TODO
+
+---
+
+## Deployment (Railway)
+
+1. New project → Deploy from GitHub repo. The `Dockerfile` is detected (`railway.json` pins it and
+   sets the `/api/health` healthcheck).
+2. Add a **Volume mounted at `/data`** (never at `/app` — that hides the code). `DB_PATH` defaults
+   to `/data/funnel.db` in the image.
+3. Variables: `ADMIN_TOKEN=<secret>`. `PORT` is provided by Railway.
+4. Settings → Networking → **Generate Domain**.
+5. Seed production from your machine: `npm run seed -- --target=https://<app>.up.railway.app`.
+6. Publish and roll back a version through `/admin` on production.
+7. Push a trivial commit, let it redeploy, and confirm the dashboard still shows the data.
+
+Fly.io with `fly volumes create` mounted at `/data` is equivalent. Serverless platforms
+(Vercel, Netlify, Workers) cannot work: no persistent filesystem or long-lived process for SQLite.
+
+---
+
+## Known limitations and assumptions
+
+- **Single SQLite writer** → one instance, no horizontal scaling, brief interruption on redeploy.
+- **Multi-tab:** two tabs share one cookie and one session row; `answers_json` is last-write-wins,
+  so tabs at different steps can clobber each other (stale `stepId`s are ignored, which limits damage).
+- **`next_step_id` reveals the branch taken.** It is a low-cardinality derived signal and strictly
+  less information than the raw answer; branching analytics is impossible without it.
+- **Admin auth** is a shared bearer token, not real authentication.
+- **No visual config editor** (out of scope per the brief).
+- **Free-tier hosting:** the first request after idle may be slow.
+- **Result id on late events:** `result_id` is stamped at ingest time from the session row; if a user
+  goes back from the result and reaches a different result before a delayed event arrives, that event
+  carries the newer result.
+- **Seed reproducibility:** the generator's choices are seeded, but session IDs (and therefore
+  variant assignment) are generated by the server, so per-variant splits vary slightly between runs.
+- One funnel per deployment is assumed by the dashboard and admin page (the schema supports more).
+
+---
+
+## How this was built
+
+TODO
