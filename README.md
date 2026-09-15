@@ -7,10 +7,10 @@ analytics dashboard. TypeScript end to end, one process, one SQLite file.
 
 | | |
 |---|---|
-| Public URL | `TODO: https://<app>.up.railway.app` |
-| Repository | `TODO: https://github.com/<user>/funnel` |
-| Admin page | `/admin` — token: `TODO: set ADMIN_TOKEN on the host and put it here` |
-| Dashboard | `/dashboard` |
+| Public URL | https://funnel-production-1c0d.up.railway.app/ |
+| Repository | https://github.com/BekmurzinTimur/funnel |
+| Admin page | https://funnel-production-1c0d.up.railway.app/admin — the admin token is not published in the repository; it is shared with reviewers separately (ask the author) |
+| Dashboard | https://funnel-production-1c0d.up.railway.app/dashboard |
 
 **Reviewer shortcuts** (append to the funnel URL):
 
@@ -20,9 +20,16 @@ analytics dashboard. TypeScript end to end, one process, one SQLite file.
 | `?variant=A` / `?variant=B` | Force a variant for a *new* session. On an existing session with a different variant, a new session is started — the pinned one is never mutated. Forced sessions are excluded from the A/B comparison card. |
 | `?utm_campaign=…&utm_source=…&utm_medium=…` | First-touch attribution, stored on the session row. |
 
+For example:
+
+- Variant A from scratch: https://funnel-production-1c0d.up.railway.app/?reset=1&variant=A
+- Variant B from scratch: https://funnel-production-1c0d.up.railway.app/?reset=1&variant=B
+- With attribution: https://funnel-production-1c0d.up.railway.app/?reset=1&utm_source=review&utm_medium=manual&utm_campaign=review
+
 To see both branches: answer `work_mode` = *Hybrid* or *Mostly in the office* to get the
-`office_days` question, *Fully remote* to skip it. On v3, selecting *Compliance* in
-`priorities` opens `security_constraints`.
+`office_days` question, *Fully remote* to skip it. On v3 (activate it on `/admin`), selecting
+*Compliance and access control* in `priorities` opens `security_constraints`, and variant B no
+longer asks `tool_count`.
 
 ---
 
@@ -339,24 +346,43 @@ allowed-list gate).
 | 23:35 – 00:12 | **Phase 2 — four parallel tracks** in separate git worktrees (session & admin, funnel UI, event ingest & generator, analytics). In parallel on `main`: Dockerfile/Railway config and the README draft. |
 | 00:12 – 00:26 | **Phase 3 — review & integrate:** one review agent per track, merge A → C → B → D, end-to-end generator run, headless-browser click-through of both variants and branches, review fixes. |
 | Day 2, ~00:30 | **Iteration 2:** v3 published, activated, clicked through, generator re-run, old v1 session finished, rolled back — no schema or pipeline changes. |
-| TODO | Deploy to Railway, seed production, publish/rollback on production, redeploy persistence check. |
+| Day 2 | **Deploy:** Railway, single Docker service with a volume at `/data`; public domain generated. |
 
 ---
 
 ## Deployment (Railway)
 
-1. New project → Deploy from GitHub repo. The `Dockerfile` is detected (`railway.json` pins it and
-   sets the `/api/health` healthcheck).
-2. Add a **Volume mounted at `/data`** (never at `/app` — that hides the code). `DB_PATH` defaults
-   to `/data/funnel.db` in the image.
-3. Variables: `ADMIN_TOKEN=<secret>`. `PORT` is provided by Railway.
-4. Settings → Networking → **Generate Domain**.
-5. Seed production from your machine: `npm run seed -- --target=https://<app>.up.railway.app`.
-6. Publish and roll back a version through `/admin` on production.
-7. Push a trivial commit, let it redeploy, and confirm the dashboard still shows the data.
+The production instance runs on Railway from this repository.
+
+1. **New Project → Deploy from GitHub repo.** Railway builds the `Dockerfile`; `railway.json` pins
+   the Dockerfile builder, one replica, restart on failure and the `/api/health` healthcheck.
+2. **Variables:** `ADMIN_TOKEN=<secret>` and `PORT=3000`. `NODE_ENV=production` and
+   `DB_PATH=/data/funnel.db` are set in the image.
+3. **Attach a volume mounted at `/data`** — never at `/app`, which would hide the code.
+4. **Settings → Networking → Public Networking → Generate Domain**, target port `3000`. Use that
+   `*.up.railway.app` URL; the `http://10.x.x.x:3000` address in the deploy log is Railway's private
+   network and is not reachable from a browser.
+5. Every push to `main` redeploys. Data lives on the volume, so it survives redeploys; the server
+   never generates traffic on boot, so an empty dashboard after a deploy means the volume is wrong.
 
 Fly.io with `fly volumes create` mounted at `/data` is equivalent. Serverless platforms
 (Vercel, Netlify, Workers) cannot work: no persistent filesystem or long-lived process for SQLite.
+Render works only on a paid instance with a persistent disk at `/data`.
+
+### Reproducing the dashboard data
+
+The generator drives the public HTTP API only, so it works against any deployment:
+
+```bash
+# v1 active
+npm run seed -- --sessions=150 --seed=42 --target=https://funnel-production-1c0d.up.railway.app
+# after publishing and activating configs/iteration-2/funnel-v3.json on /admin
+npm run seed -- --sessions=120 --seed=7 --target=https://funnel-production-1c0d.up.railway.app
+```
+
+Different seeds give v1 and v3 independent simulated audiences. The same seed reproduces the same
+per-step decisions; exact numbers still vary slightly because the server assigns variants from
+random session IDs. All generated sessions and events are marked `is_synthetic = 1`.
 
 ---
 
