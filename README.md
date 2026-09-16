@@ -9,8 +9,7 @@ analytics dashboard. TypeScript end to end, one process, one SQLite file.
 |---|---|
 | Public URL | https://funnel-production-1c0d.up.railway.app/ |
 | Repository | https://github.com/BekmurzinTimur/funnel |
-| Admin page | https://funnel-production-1c0d.up.railway.app/admin — the admin token is not published in the repository; it is shared with reviewers separately (ask the author) |
-| Dashboard | https://funnel-production-1c0d.up.railway.app/dashboard |
+| Internal console | https://funnel-production-1c0d.up.railway.app/dashboard — analytics need no token. Publishing, activating and rollback live on its **Versions** tab and need the admin token, which is not published in the repository; it is shared with reviewers separately (ask the author). `/admin` still works and deep-links to that tab. |
 
 **Reviewer shortcuts** (append to the funnel URL):
 
@@ -27,7 +26,7 @@ For example:
 - With attribution: https://funnel-production-1c0d.up.railway.app/?reset=1&utm_source=review&utm_medium=manual&utm_campaign=review
 
 To see both branches: answer `work_mode` = *Hybrid* or *Mostly in the office* to get the
-`office_days` question, *Fully remote* to skip it. On v3 (activate it on `/admin`), selecting
+`office_days` question, *Fully remote* to skip it. On v3 (activate it on the console's Versions tab), selecting
 *Compliance and access control* in `priorities` opens `security_constraints`, and variant B no
 longer asks `tool_count`.
 
@@ -42,8 +41,8 @@ npm run dev          # Fastify on :3000 (tsx watch) + Vite on :5173, /api proxie
 npm run seed         # in another terminal: 150 synthetic sessions through the HTTP API
 ```
 
-Open http://localhost:5173 (funnel), `/admin` (token `dev-admin-token` unless `ADMIN_TOKEN`
-is set) and `/dashboard`.
+Open http://localhost:5173 (funnel) and `/dashboard` (the internal console). Unlock its
+Versions tab with the token `dev-admin-token`, unless `ADMIN_TOKEN` is set.
 
 | Command | |
 |---|---|
@@ -68,7 +67,7 @@ that the data needs re-seeding.
 src/shared   isomorphic core: config schema, condition evaluator, variant materialisation,
              navigation/progress, result resolution, API contracts (Zod)
 src/server   Fastify + better-sqlite3: session, events, admin, analytics routes
-src/web      React: funnel renderer (/), admin (/admin), dashboard (/dashboard), event queue
+src/web      React: funnel renderer (/), internal console (/dashboard), event queue
 scripts      seed.ts traffic generator
 configs      funnel-v1.json (boot-seeded), iteration-2/funnel-v3.json (published via admin)
 ```
@@ -314,7 +313,7 @@ removes `tool_count` from variant B, adds two results placed first in `resultRul
 `recommendation_expanded` event and changes the experiment id.
 
 It shipped with **zero DDL and zero changes** to validation, ingest, storage or analytics:
-publish via `/admin` → stored as v3 → activate → new sessions run v3 while existing v1 sessions
+publish on the Versions tab → stored as v3 → activate → new sessions run v3 while existing v1 sessions
 finish on v1 → roll back by activating v1. The `contains` operator and the
 `recommendation_expanded` trigger point were built in iteration 1 (the latter dormant behind the
 allowed-list gate).
@@ -376,7 +375,7 @@ The generator drives the public HTTP API only, so it works against any deploymen
 ```bash
 # v1 active
 npm run seed -- --sessions=150 --seed=42 --target=https://funnel-production-1c0d.up.railway.app
-# after publishing and activating configs/iteration-2/funnel-v3.json on /admin
+# after publishing and activating configs/iteration-2/funnel-v3.json on the Versions tab
 npm run seed -- --sessions=120 --seed=7 --target=https://funnel-production-1c0d.up.railway.app
 ```
 
@@ -431,10 +430,10 @@ UI track built against `api.ts` types.
 
 | Track | Delivered | Tests |
 |---|---|---|
-| A. Session & admin | session lifecycle, variant assignment, TTL, admin routes, `/admin` | version-pinning, variant-stability, publish-rollback |
+| A. Session & admin | session lifecycle, variant assignment, TTL, admin routes, version management UI | version-pinning, variant-stability, publish-rollback |
 | B. Funnel UI | renderer, 5 step types + unknown placeholder, Back/refresh/Start over, events, `eventQueue.ts` | manual (scripted browser run at integration) |
 | C. Ingest & generator | `/api/events`, `events_rejected`, `scripts/seed.ts` | event-dedup |
-| D. Analytics | `/api/analytics` SQL, `/dashboard` | analytics |
+| D. Analytics | `/api/analytics` SQL, the analytics console | analytics |
 
 **3. A review agent per track before merge.** Each reviewer read the track's diff against the spec
 (especially the "never cut" list), ran the tests and probed edge cases with scratch scripts. What

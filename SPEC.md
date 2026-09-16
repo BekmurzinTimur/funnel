@@ -81,8 +81,8 @@ Node. Use a path alias instead.
   /web
     main.tsx
     /funnel               # the funnel renderer
-    /admin                # version management page
-    /dashboard            # analytics page
+    /internal             # the internal console at /dashboard: Overview,
+                          # Experiment, Versions (analytics + admin), Events
     /lib
       eventQueue.ts
 /scripts
@@ -392,9 +392,12 @@ All admin routes require `Authorization: Bearer ${ADMIN_TOKEN}` from an env var.
   rollback are the *same operation* — rollback is just activating a lower number.
 - `GET  /api/admin/versions/:version` → raw config JSON for inspection.
 
-**Admin page** (`/admin`): version table with active badge, activate/rollback buttons,
-a raw JSON viewer, a file-upload/paste box to publish a new version, and a
-single-field form for the admin token persisted to `sessionStorage`.
+**Version management** lives on the **Versions** tab of the internal console: version
+table with active badge, activate/rollback buttons, a raw JSON viewer, a drop-zone /
+paste box to publish a new version, and a single-field form for the admin token
+persisted to `sessionStorage`. The tab's upper half is the public version analytics
+and renders without a token; only the management half below the divider is gated, so
+the first config can still be published on an empty database. `/admin` redirects here.
 
 Old versions are never deleted, so sessions pinned to them keep resolving forever.
 
@@ -596,12 +599,27 @@ aggregation is config-aware.
 forced assignment is not random assignment. They are included everywhere else, so a
 reviewer's own `?variant=B` sessions still show up in the per-step table. No toggle.
 
-### Dashboard UI (`/dashboard`)
+### Internal console UI (`/dashboard`)
 
-Filter bar, a summary row (started / completed / CTA CTR), a per-step table with
-absolute session counts **next to every percentage**, an A-vs-B funnel-level card,
-and a version comparison table. One bar chart is enough. Prioritise correct numbers
-over visual polish.
+A persistent filter bar and KPI row (started / completed / CTA CTR / conversion) above
+four tabs, so each metric family appears exactly once:
+
+| Tab | Contents |
+|---|---|
+| Overview | Per-step funnel meters + the full numbers table behind a disclosure |
+| Experiment | A-vs-B funnel-level bars, metric table, z-test |
+| Versions | Version comparison and step×version matrix; admin controls below the gate |
+| Events | Distinct sessions per event name |
+
+Absolute session counts appear **next to every percentage**. Correct numbers come
+first, but the numbers have to be readable: the Overview bars encode each step's
+*reach* as a share of the sessions that started, because the edge-based conversion
+ratio is ~100% at every step and plots as a wall of full bars. Conversion stays in
+the table, where it works as the data-quality check it is.
+
+Chart colours are a validated two-slot categorical palette (variant A / variant B)
+plus a single-hue ordinal ramp for the meters, with explicit light and dark values;
+versions are a single series and never borrow the A/B pair.
 
 ---
 
@@ -743,7 +761,8 @@ Single Dockerfile, single service, single port.
 - `PORT` from env, bind `0.0.0.0`.
 - `DB_PATH` from env; `/data/funnel.db` in production, `./data/funnel.db` locally.
 - `ADMIN_TOKEN` from env.
-- Fastify serves `/api/*` and `dist/` with an SPA fallback for `/admin`, `/dashboard`.
+- Fastify serves `/api/*` and `dist/` with an SPA fallback for `/dashboard` (and `/admin`,
+  which the client redirects to the console's Versions tab).
 
 **Railway** with a Volume mounted at `/data` is the target: trial credit covers the
 evaluation window, no credit card, Dockerfile auto-detected, Generate Domain for a
@@ -848,10 +867,10 @@ depends only on phase 1 and ships its own tests from §10.
 
 | Track | Work | Tests |
 |---|---|---|
-| A. Session & admin | `/api/session` create/resume/answer/back, variant assignment, TTL, boot config seed, admin routes + `/admin` page | version-pinning, variant-stability, publish-rollback |
+| A. Session & admin | `/api/session` create/resume/answer/back, variant assignment, TTL, boot config seed, admin routes + the console's Versions tab | version-pinning, variant-stability, publish-rollback |
 | B. Funnel UI | Renderer, five step types + unknown-type placeholder, Back / refresh / Start over, result + CTA expand, event emission, `eventQueue.ts` | — (manual click-through) |
 | C. Event ingest & generator | `/api/events`, `events_rejected`, `scripts/seed.ts` | event-dedup |
-| D. Analytics | `/api/analytics` SQL + `/dashboard`, built against a hand-made fixture DB so it does not wait on C | analytics |
+| D. Analytics | `/api/analytics` SQL + the console, built against a hand-made fixture DB so it does not wait on C | analytics |
 
 **Phase 3 — Review and integrate.** A review agent checks each track's diff against
 this spec (especially the "Never cut" list) before merge. Merge A → C → B → D, run

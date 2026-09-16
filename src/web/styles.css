@@ -9,7 +9,37 @@
   --accent-soft: #e6ecfb;
   --danger: #b3261e;
   --success: #1e7b3a;
+
+  /* Spacing scale. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  --radius-sm: 8px;
   --radius: 10px;
+  --radius-lg: 14px;
+
+  --shadow-1: 0 1px 2px rgb(29 29 27 / 6%);
+  --shadow-2: 0 2px 8px rgb(29 29 27 / 8%);
+
+  /*
+   * Chart palette. Validated with the dataviz validator against this surface
+   * (#ffffff): categorical worst-pair CVD dE 24.7 and normal-vision dE 33.6,
+   * both slots >= 3:1 contrast; the meter ramp is monotone with a 2.11:1 light
+   * end. The dark values below are separately chosen steps for #1f1f1d, not a
+   * flip of these -- do not "simplify" them into one set.
+   */
+  --series-1: #2a78d6; /* variant A; single-series bars */
+  --series-2: #eb6834; /* variant B */
+  --meter-fill: #2a78d6; /* converted */
+  --meter-track: #86b6ef; /* eligible remainder (drop-off) */
+  --good: #006300;
+  --critical: #d03b3b;
+  --grid: #e1e0d9;
+
   color-scheme: light;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.5;
@@ -27,6 +57,18 @@
     --accent-soft: #252c40;
     --danger: #f2877f;
     --success: #6fcf8f;
+
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+    --shadow-2: 0 2px 8px rgb(0 0 0 / 40%);
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --meter-fill: #5598e7;
+    --meter-track: #184f95;
+    --good: #0ca30c;
+    --critical: #d03b3b;
+    --grid: #2c2c2a;
+
     color-scheme: dark;
   }
 }
@@ -132,4 +174,43 @@ td {
 
 .error {
   color: var(--danger);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* One pill component; replaces the old .tag and .admin-badge. */
+.pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  vertical-align: 1px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.pill-neutral {
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  font-weight: 500;
+}
+
+/*
+ * Deliberately not a blanket `* { transition: none !important }`: funnel.css
+ * slows the spinner to 2.4s under reduced motion rather than freezing it, and a
+ * global override would clobber that. New animated classes opt in here.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .meter-fill,
+  .sbar-fill,
+  .tab {
+    transition: none;
+  }
 }

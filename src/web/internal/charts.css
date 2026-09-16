@@ -1,0 +1,191 @@
+/*
+ * Chart marks only -- no page chrome lives here. Colours come from the
+ * validated tokens in styles.css (--series-*, --meter-*), which have explicit
+ * light and dark values.
+ */
+
+.chart {
+  margin: 0;
+}
+
+.chart-caption {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: var(--s3);
+}
+
+.chart-body {
+  display: grid;
+  gap: var(--s2);
+}
+
+/* Legend -- identity is never colour alone; the text label carries it. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4);
+  list-style: none;
+  margin: 0 0 var(--s3);
+  padding: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-key {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+/* Categorical slots. Colour follows the entity, never the row order. */
+.series-1 {
+  background: var(--series-1);
+}
+
+.series-2 {
+  background: var(--series-2);
+}
+
+/* ---- Meter: converted fill over the eligible remainder ---- */
+
+.meter-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1.1fr) minmax(0, 2.4fr) auto auto;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.meter-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.meter-label code {
+  font-size: 0.85rem;
+}
+
+.meter-track {
+  position: relative;
+  height: 18px; /* <= 24px mark spec */
+  border-radius: 3px;
+  background: var(--meter-track);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--meter-fill);
+  /* Square at the baseline, 4px rounded at the data end. */
+  border-radius: 0 4px 4px 0;
+  /* The 2px surface gap that separates the two fills -- not a border on the mark. */
+  box-shadow: 2px 0 0 var(--surface);
+  transition: width 240ms ease-out;
+}
+
+.meter-fill-full {
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+.meter-value,
+.sbar-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.meter-trailing {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  text-align: right;
+  min-width: 4.5em;
+}
+
+.meter-head {
+  display: grid;
+  grid-template-columns: minmax(90px, 1.1fr) minmax(0, 2.4fr) auto auto;
+  gap: var(--s3);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding-bottom: var(--s1);
+  border-bottom: 1px solid var(--grid); /* solid hairline, never dashed */
+  margin-bottom: var(--s1);
+}
+
+/* ---- Series bars ---- */
+
+.sbars {
+  display: grid;
+  gap: var(--s2);
+}
+
+.sbar-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(0, 3fr) auto;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.sbar-label {
+  font-size: 0.9rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sbar-track {
+  height: 16px;
+  border-radius: 3px;
+  background: var(--bg);
+  border: 1px solid var(--grid);
+  overflow: hidden;
+}
+
+.sbar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  transition: width 240ms ease-out;
+}
+
+.scale-note {
+  font-size: 0.8rem;
+  margin: var(--s2) 0 0;
+}
+
+/* Delta annotations. Direction is carried by the sign in the text too. */
+.delta-good {
+  color: var(--good);
+  font-weight: 600;
+}
+
+.delta-bad {
+  color: var(--critical);
+  font-weight: 600;
+}
+
+/* An inconclusive delta stays in ink -- direction without a verdict. */
+.delta-flat {
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .meter-row,
+  .meter-head {
+    grid-template-columns: minmax(70px, 1fr) minmax(0, 1.6fr) auto;
+  }
+
+  .meter-trailing,
+  .meter-head > :last-child {
+    display: none;
+  }
+}
