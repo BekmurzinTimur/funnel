@@ -4,7 +4,6 @@ import InternalHeader from './InternalHeader';
 import { count, pct } from './format';
 import { StatTile } from './parts';
 import { FILTER_KEYS, parseTab, TABS, withParams, type FilterKey, type TabId } from './tabs';
-import { useAdminToken } from './useAdminToken';
 import { useAnalytics } from './useAnalytics';
 import EventsTab from './tabs/EventsTab';
 import ExperimentTab from './tabs/ExperimentTab';
@@ -23,12 +22,11 @@ import './internal.css';
 export default function InternalPage() {
   const [params, setParams] = useSearchParams();
   const tab = parseTab(params);
-  const admin = useAdminToken();
   const { data, error, loading, filters, setFilter, clearFilters } = useAnalytics();
 
   return (
     <main className="page page-wide console">
-      <InternalHeader admin={admin} />
+      <InternalHeader />
 
       <FilterBar data={data} filters={filters} loading={loading} onChange={setFilter} />
 
@@ -48,7 +46,7 @@ export default function InternalPage() {
       </nav>
 
       <div className="tab-panel">
-        <TabBody tab={tab} data={data} error={error} loading={loading} admin={admin} onClearFilters={clearFilters} />
+        <TabBody tab={tab} data={data} error={error} loading={loading} onClearFilters={clearFilters} />
       </div>
     </main>
   );
@@ -59,19 +57,17 @@ function TabBody({
   data,
   error,
   loading,
-  admin,
   onClearFilters,
 }: {
   tab: TabId;
   data: AnalyticsResponse | null;
   error: string | null;
   loading: boolean;
-  admin: ReturnType<typeof useAdminToken>;
   onClearFilters: () => void;
 }) {
   // The Versions tab renders even with no analytics at all -- that is the only
   // route to publishing the first config on a fresh database.
-  if (tab === 'versions') return <VersionsTab data={data} error={error} admin={admin} />;
+  if (tab === 'versions') return <VersionsTab data={data} error={error} />;
 
   if (error) {
     return (

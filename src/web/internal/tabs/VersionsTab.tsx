@@ -1,29 +1,14 @@
 import type { AnalyticsResponse } from '@shared/api';
 import { ChartFrame, SeriesBars, type BarDatum } from '../charts';
 import { pct } from '../format';
-import { Pill, Ratio, SectionCard, TokenForm } from '../parts';
-import type { AdminToken } from '../useAdminToken';
+import { Pill, Ratio, SectionCard } from '../parts';
 import VersionAdmin from './VersionAdmin';
 
-/**
- * Versions: the publish/check/rollback loop in one place.
- *
- * The top half is public analytics; the bottom half needs the admin token. The
- * gate controls ONLY what is mounted below the divider, so an anonymous visitor
- * still sees every number and issues no /api/admin request at all.
- */
-export default function VersionsTab({
-  data,
-  error,
-  admin,
-}: {
-  data: AnalyticsResponse | null;
-  error: string | null;
-  admin: AdminToken;
-}) {
+/** Versions: the publish / check / rollback loop in one place, above the version analytics. */
+export default function VersionsTab({ data, error }: { data: AnalyticsResponse | null; error: string | null }) {
   return (
     <div className="stack">
-      <p className="eyebrow">Public analytics</p>
+      <p className="eyebrow">Version analytics</p>
       {error ? (
         <div className="card notice" role="alert">
           <p className="error">Could not load analytics: {error}</p>
@@ -39,20 +24,8 @@ export default function VersionsTab({
 
       <hr className="gate-divider" />
 
-      <p className="eyebrow">
-        Requires admin token
-        {admin.token === '' && <Pill kind="neutral">locked</Pill>}
-      </p>
-      {admin.token === '' ? (
-        <SectionCard
-          title="Manage versions"
-          subtitle="Publishing, activating and rollback need the admin token. Analytics above need none."
-        >
-          <TokenForm token={admin.token} onSave={admin.setToken} onClear={admin.clearToken} />
-        </SectionCard>
-      ) : (
-        <VersionAdmin admin={admin} />
-      )}
+      <p className="eyebrow">Manage versions</p>
+      <VersionAdmin />
     </div>
   );
 }

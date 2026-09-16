@@ -1,4 +1,3 @@
-import { timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ActivateResponse, PublishResponse, VersionListResponse } from '@shared/api';
 import { ActivateParamsSchema } from '@shared/api';
@@ -18,26 +17,16 @@ import {
 
 const HOUR_MS = 3_600_000;
 
-function tokenMatches(header: string | undefined, token: string): boolean {
-  if (!header || !token) return false;
-  const match = /^bearer +(\S+)$/i.exec(header); // auth scheme is case-insensitive (RFC 7235)
-  if (!match) return false;
-  const given = Buffer.from(match[1]);
-  const expected = Buffer.from(token);
-  return given.length === expected.length && timingSafeEqual(given, expected);
-}
-
-// Track A — SPEC §5: /api/admin/versions (list, publish, get, activate).
-// Registered as an encapsulated plugin: the auth hook and the raw-body JSON parser
-// apply to these routes only.
+// SPEC §5: /api/admin/versions (list, publish, get, activate).
+// Registered as an encapsulated plugin so the raw-body JSON parser applies to
+// these routes only.
+//
+// These routes are UNAUTHENTICATED: anyone who can reach the deployment can
+// publish, activate and roll back versions. That is a deliberate choice for this
+// review deployment (see README "Known limitations"); a real deployment needs
+// authentication in front of /api/admin/*.
 export default async function adminRoutes(app: FastifyInstance): Promise<void> {
   const { db } = app;
-
-  app.addHook('onRequest', async (request, reply) => {
-    if (!tokenMatches(request.headers.authorization, app.adminToken)) {
-      return reply.code(401).send({ error: 'unauthorized' });
-    }
-  });
 
   // Keep the submitted text as the body so the config is stored verbatim (§3.1).
   // The handler parses it. text/plain is accepted too (app-level parser would pre-parse it).

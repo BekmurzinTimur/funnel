@@ -12,7 +12,6 @@ import sessionRoutes from './routes/session';
 
 export interface AppOptions {
   dbPath: string;
-  adminToken: string;
   configsDir: string;
   /** Built SPA directory. Omit or null to serve the API only (tests). */
   staticDir?: string | null;
@@ -22,7 +21,6 @@ export interface AppOptions {
 declare module 'fastify' {
   interface FastifyInstance {
     db: DB;
-    adminToken: string;
   }
 }
 
@@ -34,7 +32,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   if (seeded.length) app.log.info({ seeded }, 'boot-seeded funnel versions');
 
   app.decorate('db', db);
-  app.decorate('adminToken', options.adminToken);
   app.addHook('onClose', async () => db.close());
 
   // navigator.sendBeacon may arrive as text/plain; treat it as JSON.

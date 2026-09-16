@@ -10,7 +10,6 @@ import type { DB } from '../src/server/db';
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
 export const CONFIGS_DIR = join(ROOT, 'configs');
-export const ADMIN_TOKEN = 'test-admin-token';
 
 export const readConfigText = (relative: string): string => readFileSync(join(CONFIGS_DIR, relative), 'utf8');
 export const readConfig = (relative: string): FunnelConfig => JSON.parse(readConfigText(relative)) as FunnelConfig;
@@ -24,7 +23,7 @@ export interface TestApp {
 /** The real Fastify app against a temp-file SQLite DB, boot-seeded from /configs. */
 export async function createTestApp(): Promise<TestApp> {
   const dir = mkdtempSync(join(tmpdir(), 'funnel-test-'));
-  const app = await buildApp({ dbPath: join(dir, 'funnel.db'), adminToken: ADMIN_TOKEN, configsDir: CONFIGS_DIR });
+  const app = await buildApp({ dbPath: join(dir, 'funnel.db'), configsDir: CONFIGS_DIR });
   return {
     app,
     db: app.db,
@@ -41,4 +40,5 @@ export function sessionCookie(response: { cookies: { name: string; value: string
   return cookie ? `${SESSION_COOKIE}=${cookie.value}` : undefined;
 }
 
-export const adminHeaders = { authorization: `Bearer ${ADMIN_TOKEN}` };
+/** The admin API is unauthenticated; publishing only needs the content type. */
+export const jsonHeaders = { 'content-type': 'application/json' };

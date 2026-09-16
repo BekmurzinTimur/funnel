@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { NavigationResponse, SessionResponse } from '@shared/api';
 import type { AnswerValue, Step } from '@shared/types';
 import { materialise } from '@shared/variant';
-import { adminHeaders, createTestApp, readConfig, readConfigText, sessionCookie, type TestApp } from './helpers';
+import { createTestApp, jsonHeaders, readConfig, readConfigText, sessionCookie, type TestApp } from './helpers';
 
 const v1 = readConfig('funnel-v1.json');
 
@@ -51,11 +51,11 @@ describe('version pinning', () => {
     const publish = await t.app.inject({
       method: 'POST',
       url: '/api/admin/versions',
-      headers: { ...adminHeaders, 'content-type': 'application/json' },
+      headers: jsonHeaders,
       payload,
     });
     expect(publish.statusCode, publish.body).toBe(201);
-    const activate = await t.app.inject({ method: 'POST', url: '/api/admin/versions/3/activate', headers: adminHeaders });
+    const activate = await t.app.inject({ method: 'POST', url: '/api/admin/versions/3/activate' });
     expect(activate.statusCode, activate.body).toBe(200);
     expect(activate.json()).toEqual({ funnelId: 'workstyle-planner', activeVersion: 3 });
   };

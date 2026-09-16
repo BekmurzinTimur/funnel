@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { NavigationResponse, SessionResponse } from '@shared/api';
 import { assignVariant } from '@shared/variant';
-import { adminHeaders, createTestApp, readConfig, readConfigText, sessionCookie, type TestApp } from './helpers';
+import { createTestApp, jsonHeaders, readConfig, readConfigText, sessionCookie, type TestApp } from './helpers';
 
 const v1 = readConfig('funnel-v1.json');
 const v3 = readConfig('iteration-2/funnel-v3.json');
@@ -67,11 +67,11 @@ describe('variant stickiness over HTTP', () => {
     const publish = await t.app.inject({
       method: 'POST',
       url: '/api/admin/versions',
-      headers: { ...adminHeaders, 'content-type': 'application/json' },
+      headers: jsonHeaders,
       payload: readConfigText('iteration-2/funnel-v3.json'),
     });
     expect(publish.statusCode).toBe(201);
-    const activate = await t.app.inject({ method: 'POST', url: '/api/admin/versions/3/activate', headers: adminHeaders });
+    const activate = await t.app.inject({ method: 'POST', url: '/api/admin/versions/3/activate' });
     expect(activate.statusCode).toBe(200);
 
     const { body: after } = await postSession('/api/session', cookie);

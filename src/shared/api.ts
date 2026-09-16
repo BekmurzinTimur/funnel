@@ -134,7 +134,7 @@ export const EventBatchResponseSchema = z.object({
 export type EventBatchResponse = z.infer<typeof EventBatchResponseSchema>;
 
 // ---------------------------------------------------------------------------
-// Admin — §5. All routes require `Authorization: Bearer ${ADMIN_TOKEN}`.
+// Admin — §5. These routes are unauthenticated in this deployment; see README.
 // ---------------------------------------------------------------------------
 
 export const VersionSummarySchema = z.object({

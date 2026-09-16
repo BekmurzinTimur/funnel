@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SessionResponse, VersionListResponse } from '@shared/api';
-import { adminHeaders, createTestApp, readConfig, readConfigText, type TestApp } from './helpers';
+import { createTestApp, jsonHeaders, readConfig, readConfigText, type TestApp } from './helpers';
 
 const V3_TEXT = readConfigText('iteration-2/funnel-v3.json');
-const jsonHeaders = { ...adminHeaders, 'content-type': 'application/json' };
 
 describe('publish and rollback', () => {
   let t: TestApp;
@@ -17,9 +16,9 @@ describe('publish and rollback', () => {
   const publish = (payload: string, headers: Record<string, string> = jsonHeaders) =>
     t.app.inject({ method: 'POST', url: '/api/admin/versions', headers, payload });
   const activate = (version: number) =>
-    t.app.inject({ method: 'POST', url: `/api/admin/versions/${version}/activate`, headers: adminHeaders });
+    t.app.inject({ method: 'POST', url: `/api/admin/versions/${version}/activate` });
   const list = async () => {
-    const res = await t.app.inject({ method: 'GET', url: '/api/admin/versions', headers: adminHeaders });
+    const res = await t.app.inject({ method: 'GET', url: '/api/admin/versions' });
     expect(res.statusCode).toBe(200);
     return res.json<VersionListResponse>().versions;
   };
@@ -47,7 +46,7 @@ describe('publish and rollback', () => {
     const stored = t.db.prepare('SELECT config_json FROM funnel_versions WHERE version = 3').get() as { config_json: string };
     expect(stored.config_json).toBe(V3_TEXT);
 
-    const raw = await t.app.inject({ method: 'GET', url: '/api/admin/versions/3', headers: adminHeaders });
+    const raw = await t.app.inject({ method: 'GET', url: '/api/admin/versions/3' });
     expect(raw.statusCode).toBe(200);
     expect(raw.headers['content-type']).toMatch(/^application\/json/);
     expect(raw.body).toBe(V3_TEXT);
@@ -91,21 +90,20 @@ describe('publish and rollback', () => {
     expect(versionCount()).toBe(2);
   });
 
-  it('requires the admin token on every admin route', async () => {
-    const wrong = { authorization: 'Bearer nope' };
-    const cases = [
+  it('admin routes are open: no token is required, and a stray Authorization header is ignored', async () => {
+    const stray = { authorization: 'Bearer nope' };
+    for (const c of [
       { method: 'GET' as const, url: '/api/admin/versions', headers: {} },
-      { method: 'GET' as const, url: '/api/admin/versions', headers: wrong },
-      { method: 'GET' as const, url: '/api/admin/versions/1', headers: wrong },
-      { method: 'POST' as const, url: '/api/admin/versions/1/activate', headers: wrong },
-      { method: 'POST' as const, url: '/api/admin/versions', headers: { ...wrong, 'content-type': 'application/json' }, payload: V3_TEXT },
-    ];
-    for (const c of cases) {
+      { method: 'GET' as const, url: '/api/admin/versions', headers: stray },
+      { method: 'GET' as const, url: '/api/admin/versions/1', headers: stray },
+    ]) {
       const res = await t.app.inject(c);
-      expect(res.statusCode, `${c.method} ${c.url}`).toBe(401);
-      expect(res.json()).toEqual({ error: 'unauthorized' });
+      expect(res.statusCode, `${c.method} ${c.url}`).toBe(200);
     }
-    expect(versionCount()).toBe(1);
+
+    expect((await publish(V3_TEXT, { ...stray, ...jsonHeaders })).statusCode).toBe(201);
+    expect((await activate(3)).statusCode).toBe(200);
+    expect(versionCount()).toBe(2);
   });
 
   it('moves the activation pointer with exactly one active version at a time', async () => {
@@ -137,7 +135,7 @@ describe('publish and rollback', () => {
       t.db.prepare('SELECT name, funnel_version FROM events WHERE session_id = ?').all(id);
     expect(eventsOf(onV3.sessionId)).toEqual([{ name: 'session_started', funnel_version: 3 }]);
 
-    const rollback = await t.app.inject({ method: 'POST', url: '/api/admin/versions/1/activate', headers: adminHeaders });
+    const rollback = await t.app.inject({ method: 'POST', url: '/api/admin/versions/1/activate' });
     expect(rollback.json()).toEqual({ funnelId: 'workstyle-planner', activeVersion: 1 });
 
     expect(eventsOf(onV3.sessionId)).toEqual([{ name: 'session_started', funnel_version: 3 }]);

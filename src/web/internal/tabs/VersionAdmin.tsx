@@ -1,20 +1,18 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import type { ActivateResponse, PublishResponse, VersionListResponse, VersionSummary } from '@shared/api';
-import { authHeaders, describeError, errorBody, requestJson, requestText } from '../../lib/http';
+import { describeError, errorBody, requestJson, requestText } from '../../lib/http';
 import { formatDate } from '../format';
-import { Pill, SectionCard, TokenForm } from '../parts';
-import type { AdminToken } from '../useAdminToken';
+import { Pill, SectionCard } from '../parts';
 
-// SPEC §5: publish, activate, rollback. Mounted only when a token exists, so an
-// anonymous visitor never issues an /api/admin request.
+// SPEC §5: publish, activate, rollback. The admin API is unauthenticated in this
+// deployment, so this panel is always available (see README "Known limitations").
 
 type PublishStatus =
   | { kind: 'idle' }
   | { kind: 'success'; message: string }
   | { kind: 'error'; message: string; details?: string[] };
 
-export default function VersionAdmin({ admin }: { admin: AdminToken }) {
-  const { token } = admin;
+export default function VersionAdmin() {
   const [versions, setVersions] = useState<VersionSummary[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -29,10 +27,9 @@ export default function VersionAdmin({ admin }: { admin: AdminToken }) {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const loadVersions = useCallback(async () => {
-    if (!token) return;
     setLoading(true);
     try {
-      const data = await requestJson<VersionListResponse>('GET', '/api/admin/versions', undefined, authHeaders(token));
+      const data = await requestJson<VersionListResponse>('GET', '/api/admin/versions');
       setVersions(data.versions);
       setListError(null);
     } catch (err) {
@@ -41,7 +38,7 @@ export default function VersionAdmin({ admin }: { admin: AdminToken }) {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     void loadVersions();
@@ -59,12 +56,7 @@ export default function VersionAdmin({ admin }: { admin: AdminToken }) {
     setBusyKey(keyOf(v));
     setActionMessage(null);
     try {
-      const result = await requestJson<ActivateResponse>(
-        'POST',
-        `/api/admin/versions/${v.version}/activate${query(v)}`,
-        undefined,
-        authHeaders(token),
-      );
+      const result = await requestJson<ActivateResponse>('POST', `/api/admin/versions/${v.version}/activate${query(v)}`);
       setActionMessage({ kind: 'success', text: `v${result.activeVersion} of ${result.funnelId} is now active.` });
       await loadVersions();
     } catch (err) {
@@ -82,7 +74,7 @@ export default function VersionAdmin({ admin }: { admin: AdminToken }) {
     }
     setBusyKey(key);
     try {
-      const { text } = await requestText('GET', `/api/admin/versions/${v.version}${query(v)}`, token);
+      const { text } = await requestText('GET', `/api/admin/versions/${v.version}${query(v)}`);
       setOpenJson((current) => ({ ...current, [key]: text }));
     } catch (err) {
       setActionMessage({ kind: 'error', text: describeError(err) });
@@ -115,7 +107,7 @@ export default function VersionAdmin({ admin }: { admin: AdminToken }) {
     setPublishing(true);
     setPublishStatus({ kind: 'idle' });
     try {
-      const { data } = await requestText('POST', '/api/admin/versions', token, draft);
+      const { data } = await requestText('POST', '/api/admin/versions', draft);
       const result = data as PublishResponse;
       setPublishStatus({
         kind: 'success',
@@ -136,9 +128,6 @@ export default function VersionAdmin({ admin }: { admin: AdminToken }) {
     a.funnelId === b.funnelId ? b.version - a.version : a.funnelId.localeCompare(b.funnelId),
   );
 
-  // A rejected token: keep it in state so it can be corrected, not retyped.
-  const rejected = listError !== null && versions === null;
-
   return (
     <div className="stack">
       <SectionCard
@@ -153,7 +142,6 @@ export default function VersionAdmin({ admin }: { admin: AdminToken }) {
         {listError && (
           <div role="alert">
             <p className="error">{listError}</p>
-            {rejected && <TokenForm token={admin.token} onSave={admin.setToken} onClear={admin.clearToken} />}
           </div>
         )}
         {actionMessage && (

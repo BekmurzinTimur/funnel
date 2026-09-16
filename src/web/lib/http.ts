@@ -35,19 +35,16 @@ export async function requestJson<T>(
   return data as T;
 }
 
-export const authHeaders = (token: string) => ({ authorization: `Bearer ${token}` });
-
 /** Sends text exactly as typed, so the server stores the config verbatim. */
 export async function requestText(
   method: 'GET' | 'POST',
   url: string,
-  token: string,
   body?: string,
 ): Promise<{ text: string; data: unknown }> {
   const response = await fetch(url, {
     method,
     credentials: 'same-origin',
-    headers: body === undefined ? authHeaders(token) : { ...authHeaders(token), 'content-type': 'application/json' },
+    headers: body === undefined ? {} : { 'content-type': 'application/json' },
     body,
   });
   const text = await response.text();
@@ -64,13 +61,9 @@ export async function requestText(
 export const errorBody = (err: unknown): Partial<ApiError> =>
   err instanceof HttpError && typeof err.body === 'object' && err.body !== null ? (err.body as Partial<ApiError>) : {};
 
-/**
- * Human-readable message for a failed request. 401 only ever comes from
- * /api/admin/*, so naming the token there is always correct.
- */
+/** Human-readable message for a failed request. */
 export function describeError(err: unknown): string {
   if (err instanceof HttpError) {
-    if (err.status === 401) return 'The admin token was rejected.';
     return errorBody(err).message ?? errorBody(err).error ?? `Request failed (HTTP ${err.status}).`;
   }
   return err instanceof Error ? err.message : String(err);

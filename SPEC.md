@@ -372,7 +372,8 @@ variant. Document this in the README.
 
 ## 5. Versioning and rollback
 
-All admin routes require `Authorization: Bearer ${ADMIN_TOKEN}` from an env var.
+Admin routes are unauthenticated in this build: the bearer-token gate was removed so reviewers can
+exercise publish and rollback without a credential. See the README's known limitations.
 
 - `GET  /api/admin/versions` → list with `is_active`, `created_at`, live session count
   per version.
@@ -393,11 +394,11 @@ All admin routes require `Authorization: Bearer ${ADMIN_TOKEN}` from an env var.
 - `GET  /api/admin/versions/:version` → raw config JSON for inspection.
 
 **Version management** lives on the **Versions** tab of the internal console: version
-table with active badge, activate/rollback buttons, a raw JSON viewer, a drop-zone /
-paste box to publish a new version, and a single-field form for the admin token
-persisted to `sessionStorage`. The tab's upper half is the public version analytics
-and renders without a token; only the management half below the divider is gated, so
-the first config can still be published on an empty database. `/admin` redirects here.
+table with active badge, activate/rollback buttons, a raw JSON viewer, and a drop-zone /
+paste box to publish a new version. The tab's upper half is the version analytics; the
+management half sits below the divider and is always available, so the first config can
+still be published on an empty database. `/admin` redirects here. Nothing is gated —
+the admin API needs no credential in this build.
 
 Old versions are never deleted, so sessions pinned to them keep resolving forever.
 
@@ -760,7 +761,7 @@ Single Dockerfile, single service, single port.
 
 - `PORT` from env, bind `0.0.0.0`.
 - `DB_PATH` from env; `/data/funnel.db` in production, `./data/funnel.db` locally.
-- `ADMIN_TOKEN` from env.
+- No admin credential (the token gate was removed; see §5).
 - Fastify serves `/api/*` and `dist/` with an SPA fallback for `/dashboard` (and `/admin`,
   which the client redirects to the console's Versions tab).
 
@@ -790,8 +791,9 @@ Deploy checklist:
 
 The brief grades this. Include:
 
-- Public URL, repository link, **admin token**, and the `?reset=1` / `?variant=B`
-  query parameters so a reviewer can exercise both variants and both branches.
+- Public URL, repository link, the fact that the console needs no credential, and the
+  `?reset=1` / `?variant=B` query parameters so a reviewer can exercise both variants
+  and both branches.
 - Local setup: clone, `npm i`, `npm run dev`, then `npm run seed` to populate the
   dashboard.
 - **Data model**, event schema, and aggregation rules — explicitly explain the
@@ -844,7 +846,7 @@ Listing these reads as engineering judgment. Omitting them reads as oversight.
 - `next_step_id` in `step_completed` is a low-cardinality derived signal that reveals
   which branch a session took. This is a deliberate trade — branching analytics is
   impossible without it — and it is strictly less information than the raw answer.
-- Admin auth is a shared bearer token, not real authentication.
+- The admin API has no authentication at all in this build.
 - No visual config editor (excluded by the brief).
 - Free-tier hosting: first request after idle may be slow.
 - Statistical significance testing, if cut.

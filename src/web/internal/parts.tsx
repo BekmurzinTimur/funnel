@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { count, pct, ratioLabel } from './format';
 
 // Small presentational primitives shared by every tab. Follows the pattern of
@@ -72,54 +72,5 @@ export function Footnotes({ summary, children }: { summary: string; children: Re
       <summary>{summary}</summary>
       <div className="footnotes-body muted">{children}</div>
     </details>
-  );
-}
-
-/** The admin-token form. Rendered in the header menu and inline on the Versions tab. */
-export function TokenForm({
-  token,
-  onSave,
-  onClear,
-  autoFocus = false,
-}: {
-  token: string;
-  onSave: (next: string) => void;
-  onClear: () => void;
-  autoFocus?: boolean;
-}) {
-  const [draft, setDraft] = useState(token);
-
-  function submit(event: FormEvent): void {
-    event.preventDefault();
-    onSave(draft);
-  }
-
-  return (
-    <form className="token-form" onSubmit={submit}>
-      <input
-        type="password"
-        aria-label="Admin token"
-        placeholder="ADMIN_TOKEN"
-        autoComplete="off"
-        autoFocus={autoFocus}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-      />
-      <button type="submit" className="primary">
-        Use token
-      </button>
-      {token && (
-        <button
-          type="button"
-          onClick={() => {
-            setDraft('');
-            onClear();
-          }}
-        >
-          Forget
-        </button>
-      )}
-      <p className="token-note muted">Kept in this tab&apos;s sessionStorage only.</p>
-    </form>
   );
 }

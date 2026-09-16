@@ -9,7 +9,7 @@ analytics dashboard. TypeScript end to end, one process, one SQLite file.
 |---|---|
 | Public URL | https://funnel-production-1c0d.up.railway.app/ |
 | Repository | https://github.com/BekmurzinTimur/funnel |
-| Internal console | https://funnel-production-1c0d.up.railway.app/dashboard — analytics need no token. Publishing, activating and rollback live on its **Versions** tab and need the admin token, which is not published in the repository; it is shared with reviewers separately (ask the author). `/admin` still works and deep-links to that tab. |
+| Internal console | https://funnel-production-1c0d.up.railway.app/dashboard — analytics, plus publishing, activating and rollback on its **Versions** tab. No sign-in: the console and the admin API are open in this review deployment (see [Known limitations](#known-limitations-and-assumptions)). `/admin` deep-links to the Versions tab. |
 
 **Reviewer shortcuts** (append to the funnel URL):
 
@@ -41,8 +41,8 @@ npm run dev          # Fastify on :3000 (tsx watch) + Vite on :5173, /api proxie
 npm run seed         # in another terminal: 150 synthetic sessions through the HTTP API
 ```
 
-Open http://localhost:5173 (funnel) and `/dashboard` (the internal console). Unlock its
-Versions tab with the token `dev-admin-token`, unless `ADMIN_TOKEN` is set.
+Open http://localhost:5173 (funnel) and `/dashboard` (the internal console); its Versions tab
+publishes, activates and rolls back versions with no sign-in.
 
 | Command | |
 |---|---|
@@ -51,8 +51,7 @@ Versions tab with the token `dev-admin-token`, unless `ADMIN_TOKEN` is set.
 | `npm run seed -- --sessions=150 --seed=42 --target=http://localhost:3000` | Traffic generator |
 | `npm run typecheck` | `tsc --noEmit` |
 
-Environment: `PORT` (3000), `DB_PATH` (`./data/funnel.db`; `/data/funnel.db` in the image),
-`ADMIN_TOKEN` (required when `NODE_ENV=production`).
+Environment: `PORT` (3000) and `DB_PATH` (`./data/funnel.db`; `/data/funnel.db` in the image).
 
 On boot the server applies `schema.sql`, inserts any `configs/*.json` (top level only) whose
 `(funnelId, version)` is missing, and activates the lowest version if none is active. It
@@ -355,8 +354,8 @@ The production instance runs on Railway from this repository.
 
 1. **New Project → Deploy from GitHub repo.** Railway builds the `Dockerfile`; `railway.json` pins
    the Dockerfile builder, one replica, restart on failure and the `/api/health` healthcheck.
-2. **Variables:** `ADMIN_TOKEN=<secret>` and `PORT=3000`. `NODE_ENV=production` and
-   `DB_PATH=/data/funnel.db` are set in the image.
+2. **Variables:** `PORT=3000`. `NODE_ENV=production` and `DB_PATH=/data/funnel.db` are set in the
+   image.
 3. **Attach a volume mounted at `/data`** — never at `/app`, which would hide the code.
 4. **Settings → Networking → Public Networking → Generate Domain**, target port `3000`. Use that
    `*.up.railway.app` URL; the `http://10.x.x.x:3000` address in the deploy log is Railway's private
@@ -396,7 +395,12 @@ random session IDs. All generated sessions and events are marked `is_synthetic =
   can overwrite each other's copy; a tab that crashes before flushing can lose its unsent events.
 - **`next_step_id` reveals the branch taken.** It is a low-cardinality derived signal and strictly
   less information than the raw answer; branching analytics is impossible without it.
-- **Admin auth** is a shared bearer token, not real authentication.
+- **The admin API has no authentication.** `/api/admin/*` and the console's Versions tab are open to
+  anyone who can reach the deployment, so any visitor could publish a config, activate a version or
+  roll one back. This is a deliberate trade for a review deployment, where reviewers need to exercise
+  publish and rollback without a credential; the data at risk is fictional. A real deployment needs
+  authentication in front of those routes — the shared bearer token this build used earlier is the
+  minimum, and SSO or an admin network the honest answer.
 - **No visual config editor** (out of scope per the brief).
 - **Free-tier hosting:** the first request after idle may be slow.
 - **Result id on late events:** `result_id` is stamped at ingest time from the session row; if a user
